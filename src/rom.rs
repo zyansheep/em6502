@@ -58,7 +58,8 @@ pub fn load_rom(path: &Path, state: &mut State) -> Result<(), ROMError> {
             nes.advance(512);
         }
 
-        state.cartridge.copy_from_slice(&nes[0..]);
+        // Copy ROM to cartridge ram
+        state.mem.cartridge.copy_from_slice(&nes[0..]);
         Ok(())
     } else {
         // println!("{:x?} != {:x?}", &nes[0..4], b"NES\x1a");

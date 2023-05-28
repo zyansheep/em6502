@@ -1,6 +1,8 @@
 #![allow(unused)]
+#![feature(bigint_helper_methods)]
 
 mod rom;
+mod instructions;
 
 use std::{path::PathBuf, io::{self, Read}, fs};
 
@@ -65,10 +67,11 @@ struct CpuState {
     pc: u16,
     /// Stack Pointer
     sp: u8,
+    /// Latch register for temporary holding
+    latch: u8,
 }
 
-/// Derived from: https://www.nesdev.org/wiki/CPU_memory_map
-pub struct State {
+pub struct Memory {
     /// 2KB of internal RAM
     ram: [u8; 0x0800],
     /// Picture Processing Unit Registers
@@ -77,75 +80,125 @@ pub struct State {
     apu: [u8; 0x0018],
     /// Testing registers
     test: [u8; 0x0008],
+    /// Data mapped from cartridge, may be writable.
     cartridge: [u8; 0xBFE0],
-    /// CPU Registers
+}
+impl Memory {
+    fn new() -> Self {
+        Self {
+            ram: [0u8; 0x0800],
+            ppu: [0u8; 0x0008],
+            apu: [0u8; 0x0018],
+            test: [0u8; 0x0008],
+            cartridge: [0u8; 0xBFE0],
+        }
+    }
+    fn mem_map(&mut self, addr: u16) -> &mut u8 {
+        let idx = addr as usize;
+        match addr {
+            /// Access internal RAM (is mirrored 4 times, total size 0x0800)
+            0x0000..=0x1FFF => &mut self.ram[idx % 0x0800],
+            /// Access the PPU, repeats every 8 bytes until 0x1FF8
+            0x2000..=0x3FFF => &mut self.ppu[idx % 0x0008],
+            0x4000..=0x4017 => &mut self.apu[idx],
+            0x4018..=0x401F => &mut self.test[idx],
+            0x4020..=0xFFFF => &mut self.cartridge[idx],
+        }
+    }
+    pub fn read(&mut self, addr: u16) -> u8 {
+        self.mem_map(addr).clone()
+    }
+    pub fn write(&mut self, addr: u16, val: u8) {
+        *self.mem_map(addr) = val;
+    }
+}
+#[derive(Debug, Default)]
+struct MemoryBus {
+    /// Lower 8 bits of address
+    low: u8,
+    /// Upper 8 bits of address
+    high: u8,
+    /// In / Out 8 bits
+    wire: u8,
+}
+impl MemoryBus {
+    fn set(&mut self, addr: u16) {
+        let bytes = addr.to_le_bytes();
+        self.low = bytes[0];
+        self.high = bytes[1];
+    }
+    fn read(&mut self, addr: u16) -> u8 {
+        self.set(addr);
+        self.wire
+    }
+}
+
+/// Derived from: https://www.nesdev.org/wiki/CPU_memory_map
+pub struct State {
+    mem: Memory,
+    bus: MemoryBus,
     cpu: CpuState,
+    /// Current instruction that may be executing
+    instr_indx: usize,
+    /// Current cycle of the current instruction executing
+    cycle_idx: usize,
+    /// State of instruction executing
+    op_state: OpState,
 }
 
 impl State {
     fn new() -> Self {
         State {
-            mem: [0u8; u16::MAX as usize],
+            mem: Memory::new(),
+            bus: Default::default(),
             cpu: Default::default(),
+            instr_indx: 0,
+            cycle_idx: 0,
+            op_state: Default::default(),
         }
     }
-    fn mem(&mut self, addr: u16) -> &mut u8 {
-        let idx = addr as usize;
-        &mut match addr {
-            /// Access internal RAM (is mirrored 4 times, total size 0x0800)
-            0x0000..=0x1FFF => self.ram[idx % 0x0800],
-            /// Access the PPU, repeats every 8 bytes until 0x1FF8
-            0x2000..=0x1FF8 => self.ppu[idx % 0x0008],
-            0x4000..=0x4017 => self.apu[idx],
-            0x4018..=0x401F => self.test[idx],
-            0x4020..=0xFFFF => self.cartridge[idx],
+    fn read(&mut self) {
+        self.bus.wire = self.mem.read(u16::from_be_bytes([self.bus.high, self.bus.low]));
+    }
+    fn write(&mut self) {
+        self.mem.write(u16::from_be_bytes([self.bus.high, self.bus.low]), self.bus.wire);
+    }
+    /// Run a single CPU cycle
+    fn step(&mut self, instr_set: [Vec<fn(&mut State)>; 256]) {
+        match self.op_state {
+            // If fetching op_state, get instr_idx, access from memory and set active op_state
+            OpState::Fetching => {
+                self.bus.set(self.cpu.pc); self.read();
+                self.instr_indx = self.bus.wire as usize;
+                self.cpu.pc += 1;
+                self.op_state = OpState::Active;
+            }
+            /// If Page cross, increment high page and set address
+            OpState::PageCross => {
+                self.bus.high += 1;
+                self.read();
+            }
+            // If not fetching, execute active instruction
+            OpState::Active => {
+                let instr_set = &instr_set[self.instr_indx];
+                instr_set[self.cycle_idx](self);
+                // If no more idx, reset OpState
+                if instr_set.len() == self.cycle_idx {
+                    self.op_state = OpState::Fetching;
+                }
+            }
         }
     }
-    pub fn mem_get(&mut self, addr: u16) -> u8 {
-        self.mem(addr).clone()
-    }
-    pub fn mem_set(&mut self, addr: u16, val: u8) {
-        *self.mem(addr) = val;
-    }
-    /// Run the CPU
-    fn step(&mut self, instr_set: [fn(&mut State); 256]) {
-        // Get instruction data from memory
-        let instr_idx = self.mem_get(self.cpu.pc) as usize;
-        // Execute corresponding instruction
-        instr_set[instr_idx](self);
-    }
 }
 
-/// Structures that extract data from state.
-trait AddressingMode<DataType> {
-    fn load(state: &mut State) -> DataType;
+/// State to keep track of temporary values used between cycles while executing an instruction.
+#[derive(Debug, Default)]
+pub enum OpState {
+    /// Waiting for new instruction to be fetched
+    #[default]
+    Fetching,
+    /// No state
+    Active,
+    /// There was a page cross when reading, increment high address before running next instruction.
+    PageCross,
 }
-
-/// Any object that implements both an InstructionType and an AddressingMode that supports the InstructionType's input.
-trait Instruction: InstructionType + AddressingMode<<Self as InstructionType>::Data> {
-    fn e(state: &mut State) {
-        let data = <Self as AddressingMode<<Self as InstructionType>::Data>>::load(state);
-        <Self as InstructionType>::execute(state, data);
-    }
-}
-
-
-/// Some type of instruction, irrespective of the addressing model.
-trait InstructionType {
-    type Data;
-    fn execute(state: &mut State, data: Self::Data);
-}
-/// Load to A
-struct LDA;
-impl InstructionType for LDA {
-    type Data = u8;
-    fn execute(state: &mut State, data: Self::Data) {
-        state.cpu.a = data;
-    }
-}
-/// Transfer A to X
-struct TAX;
-/// Transfer X to A
-struct TXA;
-struct PHA;
-struct PLA;
