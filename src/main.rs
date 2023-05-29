@@ -39,16 +39,18 @@ fn main() -> Result<(), EmulatorError> {
     let rom = rom::load_rom(&path, &mut state)?;
 
     state.init();
-    println!("{:?}", &state.mem.cartridge[state.mem.cartridge.len()-20..]);
-    println!("Starting CPU: {:?}", state.cpu);
+    println!("Start: {state:?}");
+    let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
+    println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
+    
     while state.step(INSTR_SET) {
-        println!("cpu state: {:?}", state.cpu);
+        println!("State: {state:?}");
+        println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
     }
 
-    println!("CPU: {:#?}, op_status: {:?}, instr_idx: 0x{:x?}", state.cpu, state.op_state, state.instr_indx);
-    
-    let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
-    println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16));
+    println!("Final: {state:?}");
+
+
     Ok(())
 }
 
@@ -57,6 +59,7 @@ bitflags::bitflags! {
     struct CpuFlags: u8 {
         const Negative = 0b10000000;
         const Overflow = 0b01000000;
+        const Break    = 0b00010000;
         const Decimal  = 0b00001000;
         const Zero     = 0b00000010;
         const Carry    = 0b00000001;
@@ -65,7 +68,7 @@ bitflags::bitflags! {
 }
 
 /// Derived from: https://www.nesdev.org/wiki/CPU_registers and https://www.nesdev.org/wiki/Status_flags
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct CpuState {
     /// Accumulator Register
     a: u8,
@@ -82,8 +85,23 @@ struct CpuState {
     /// Latch register for temporary holding
     latch: u8,
 }
+impl std::fmt::Debug for CpuState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CpuState")
+        .field("a", &format_args!("0x{:X?}", &self.a))
+        .field("x", &format_args!("0x{:X?}", &self.x))
+        .field("y", &format_args!("0x{:X?}", &self.y))
+        .field("flags", &self.flags)
+        .field("pc", &format_args!("0x{:X?}", &self.pc))
+        .field("sp", &format_args!("0x{:X?}", &self.sp))
+        .field("latch", &format_args!("0x{:X?}", &self.latch))
+        .finish()
+    }
+}
 impl CpuState {
-    fn pc_get(&mut self) -> [u8; 2] { self.pc.to_le_bytes() }
+    /// Get little endian byte array form of program counter
+    fn pc_get(&self) -> [u8; 2] { self.pc.to_le_bytes() }
+    /// Set program counter with little-endian byte array
     fn pc_set(&mut self, pc: [u8; 2]) { self.pc = u16::from_le_bytes(pc) }
 }
 
@@ -128,7 +146,7 @@ impl Memory {
         *self.mem_map(addr) = val;
     }
 }
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct MemoryBus {
     /// Lower 8 bits of address
     low: u8,
@@ -144,6 +162,15 @@ impl MemoryBus {
         self.high = bytes[1];
     }
 }
+impl std::fmt::Debug for MemoryBus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryBus")
+        .field("low", &format_args!("0x{:X?}", &self.low))
+        .field("high", &format_args!("0x{:X?}", &self.high))
+        .field("wire", &format_args!("0x{:X?}", &self.wire))
+        .finish()
+    }
+}
 
 /// Derived from: https://www.nesdev.org/wiki/CPU_memory_map
 pub struct State {
@@ -156,6 +183,7 @@ pub struct State {
     cycle_idx: usize,
     /// State of instruction executing
     op_state: OpState,
+    cycle_count: usize,
 }
 
 impl State {
@@ -166,14 +194,13 @@ impl State {
             cpu: Default::default(),
             instr_indx: 0,
             cycle_idx: 0,
+            cycle_count: 0,
             op_state: Default::default(),
         }
     }
     fn init(&mut self) {
         let low = self.read_at(0xFFFC);
         let high = self.read_at(0xFFFD);
-        println!("found: {:?}", (low, high));
-        println!("{:?}", &self.mem.cartridge[self.mem.cartridge.len()-20..]);
         self.cpu.pc_set([low, high]);
     }
     fn read(&mut self) {
@@ -189,7 +216,9 @@ impl State {
     }
     /// Run a single CPU cycle
     fn step(&mut self, instr_set: [&'static [fn(&mut State)]; 256]) -> bool {
+        // If operation active
         if self.op_state.contains(OpState::Active) {
+            // if page crossed or branching
             if self.op_state.contains(OpState::PageCross | OpState::Branching) {
                 // Deal with branching before page cross
                 if self.op_state.contains(OpState::Branching) {
@@ -199,11 +228,14 @@ impl State {
                     self.read();
                     self.op_state.remove(OpState::PageCross);
                 }
-            } else {
+            } else { // else deal with instruction
                 let instr_set = instr_set[self.instr_indx];
-                if instr_set.len() == 0 { return false }
+                if instr_set.len() == 0 { println!("instr_set: {instr_set:?}"); return false }
+
+                // Run op on state
                 instr_set[self.cycle_idx](self);
                 // If no more idx, reset OpState
+                self.cycle_idx += 1;
                 if instr_set.len() == self.cycle_idx {
                     self.op_state.remove(OpState::Active);
                 }
@@ -211,10 +243,24 @@ impl State {
         } else {
             // Read new instruction
             self.instr_indx = self.read_at(self.cpu.pc) as usize;
+            self.cycle_idx = 0;
             self.cpu.pc += 1;
             self.op_state.insert(OpState::Active);
         }
-        false
+        self.cycle_count += 1;
+        true
+    }
+}
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("bus", &self.bus)
+            .field("cpu", &self.cpu)
+            .field("op_state", &self.op_state)
+            .field("cycle_count", &self.cycle_count)
+            .field("instr_indx", &format_args!("0x{:x?}", &self.instr_indx))
+            .field("cycle_idx", &self.cycle_idx)
+            .finish()
     }
 }
 
@@ -227,17 +273,3 @@ bitflags::bitflags! {
         const Branching = 0b0000_0100;
     }
 }
-
-/* /// State to keep track of temporary values used between cycles while executing an instruction.
-#[derive(Debug, Default)]
-pub enum OpState {
-    /// Waiting for new instruction to be fetched
-    #[default]
-    Fetching,
-    /// No state
-    Active,
-    /// There was a page cross when reading, increment high address before running next instruction.
-    PageCross,
-    /// A branch was triggered. u8 indicates 
-    Branching(u8),
-} */

@@ -1,7 +1,7 @@
 pub use super::*;
 
 pub const INSTR_SET: [&'static [fn(&mut State)]; 256] = [
-    &[read_byte::<PCRead>, ], // x00
+    /* BRK */&[read_byte::<PCRead>, push_stack::<PCH>, push_stack::<PCL>, push_stack::<BREAK_FLAGS>, read_to_reg::<ConstRead<0xFFFE>, PCL>, read_to_reg::<ConstRead<0xFFFF>, PCH>], // x00
     &[/* ora */], // x01
     &[], // x02
     &[], // x03
@@ -33,7 +33,7 @@ pub const INSTR_SET: [&'static [fn(&mut State)]; 256] = [
     &[], // x1D
     &absolute_indexed::<XIndex, _>(rw_op::<ASL_MEM>()), // x1E
     &[], // x1F
-    &[], // x20
+    /* JSR */ &[read_to_reg::<PCRead, LATCH>, run::<NOP>, push_stack::<PCH>, push_stack::<PCL>, read_high_reg_low_run::<PCRead, LATCH, JMP>], // x20
     &[], // x21
     &[], // x22
     &[], // x23
@@ -121,7 +121,7 @@ pub const INSTR_SET: [&'static [fn(&mut State)]; 256] = [
     &[], // x75
     &[], // x76
     &[], // x77
-    &[], // x78
+    &implied::<SEI>(), // x78
     &[], // x79
     &[], // x7A
     &[], // x7B
@@ -170,7 +170,7 @@ pub const INSTR_SET: [&'static [fn(&mut State)]; 256] = [
     &[], // xA6
     &[], // xA7
     &[], // xA8
-    &[], // xA9
+    &immediate::<LDA>(), // xA9
     &[], // xAA
     &[], // xAB
     &[], // xAC
