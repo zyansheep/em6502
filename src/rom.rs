@@ -35,7 +35,7 @@ bitflags::bitflags! {
     }
 }
 
-pub fn load_rom(path: &Path, state: &mut State) -> Result<(), ROMError> {
+pub fn load_rom(path: &Path, state: &mut State) -> Result<Vec<u8>, ROMError> {
     let file = fs::read(path)?;
     let mut nes = file.as_slice();
 
@@ -58,9 +58,11 @@ pub fn load_rom(path: &Path, state: &mut State) -> Result<(), ROMError> {
             nes.advance(512);
         }
 
-        // Copy ROM to cartridge ram
-        state.mem.cartridge.copy_from_slice(&nes[0..]);
-        Ok(())
+        // Copy ROM to cartridge ram.
+        // It should be written so that it fits up to the very end of the address space
+        let start = state.mem.cartridge.len()-nes.len();
+        state.mem.cartridge[start..].copy_from_slice(&nes[..]);
+        Ok(file)
     } else {
         // println!("{:x?} != {:x?}", &nes[0..4], b"NES\x1a");
         Err(ROMError::InvalidMagicValue((&nes[0..4]).try_into().unwrap()))

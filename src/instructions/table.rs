@@ -1,13 +1,13 @@
 pub use super::*;
 
-pub static ISTR_SET: &'static [&'static [fn(&mut State)]] = &[
-    &[/* brk */], // x00
+pub const INSTR_SET: [&'static [fn(&mut State)]; 256] = [
+    &[read_byte::<PCRead>, ], // x00
     &[/* ora */], // x01
     &[], // x02
     &[], // x03
     &[], // x04
     &[], // x05
-    &[], // x06
+    &zeropage(rw_op::<ASL_MEM>()), // x06
     &[], // x07
     &[], // x08
     &[], // x09
@@ -15,7 +15,7 @@ pub static ISTR_SET: &'static [&'static [fn(&mut State)]] = &[
     &[], // x0B
     &[], // x0C
     &[], // x0D
-    &[], // x0E
+    &absolute(rw_op::<ASL_MEM>()), // x0E
     &[], // x0F
     &[], // x10
     &[], // x11
@@ -23,7 +23,7 @@ pub static ISTR_SET: &'static [&'static [fn(&mut State)]] = &[
     &[], // x13
     &[], // x14
     &[], // x15
-    &[], // x16
+    &indexed_indirect(rw_op::<ASL_MEM>()), // x16
     &[], // x17
     &[], // x18
     &[], // x19
@@ -31,22 +31,22 @@ pub static ISTR_SET: &'static [&'static [fn(&mut State)]] = &[
     &[], // x1B
     &[], // x1C
     &[], // x1D
-    &[], // x1E
+    &absolute_indexed::<XIndex, _>(rw_op::<ASL_MEM>()), // x1E
     &[], // x1F
     &[], // x20
     &[], // x21
     &[], // x22
     &[], // x23
-    &[], // x24
-    &[read_prg, load_zero, and], // x25
+    &zeropage(read_op::<BIT>()), // x24
+    &zeropage(read_op::<AND>()), // x25
     &[], // x26
     &[], // x27
     &[], // x28
-    &[immediate, and], // x29
+    &immediate::<AND>(), // x29
     &[], // x2A
     &[], // x2B
-    &[], // x2C
-    &[fetch_byte, fetch_abs, load_addr, and], // x2D
+    &absolute(read_op::<BIT>()), // x2C
+    &absolute(read_op::<AND>()), // x2D
     &[], // x2E
     &[], // x2F
     &[], // x30
@@ -102,15 +102,15 @@ pub static ISTR_SET: &'static [&'static [fn(&mut State)]] = &[
     &[], // x62
     &[], // x63
     &[], // x64
-    &[fetch_byte, load_zero, adc], // x65
+    &zeropage(read_op::<ADC>()), // x65
     &[], // x66
     &[], // x67
     &[], // x68
-    &[immediate, adc], // x69
+    &immediate::<ADC>(), // x69
     &[], // x6A
     &[], // x6B
     &[], // x6C
-    &[fetch_byte, fetch_abs, load_addr, adc], // x6D
+    &absolute(read_op::<ADC>()), // x6D
     &[], // x6E
     &[], // x6F
     &[], // x70
@@ -126,7 +126,7 @@ pub static ISTR_SET: &'static [&'static [fn(&mut State)]] = &[
     &[], // x7A
     &[], // x7B
     &[], // x7C
-    &[], // x7D
+    &absolute_indexed::<XIndex, _>(read_op::<ADC>()), // x7D
     &[], // x7E
     &[], // x7F
     &[], // x80

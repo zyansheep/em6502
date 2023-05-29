@@ -1,8 +1,12 @@
 #![allow(unused)]
+#![allow(non_camel_case_types)]
 #![feature(bigint_helper_methods)]
-
+#![feature(generic_arg_infer)]
+#![feature(generic_const_exprs)]
+#![feature(const_mut_refs)]
 mod rom;
 mod instructions;
+use instructions::INSTR_SET;
 
 use std::{path::PathBuf, io::{self, Read}, fs};
 
@@ -32,11 +36,19 @@ fn main() -> Result<(), EmulatorError> {
 
     let mut state = State::new();
 
-    if let Err(err) = rom::load_rom(&path, &mut state) {
-        println!("failed to load rom: {err}");
+    let rom = rom::load_rom(&path, &mut state)?;
+
+    state.init();
+    println!("{:?}", &state.mem.cartridge[state.mem.cartridge.len()-20..]);
+    println!("Starting CPU: {:?}", state.cpu);
+    while state.step(INSTR_SET) {
+        println!("cpu state: {:?}", state.cpu);
     }
 
-
+    println!("CPU: {:#?}, op_status: {:?}, instr_idx: 0x{:x?}", state.cpu, state.op_state, state.instr_indx);
+    
+    let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
+    println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16));
     Ok(())
 }
 
@@ -70,6 +82,10 @@ struct CpuState {
     /// Latch register for temporary holding
     latch: u8,
 }
+impl CpuState {
+    fn pc_get(&mut self) -> [u8; 2] { self.pc.to_le_bytes() }
+    fn pc_set(&mut self, pc: [u8; 2]) { self.pc = u16::from_le_bytes(pc) }
+}
 
 pub struct Memory {
     /// 2KB of internal RAM
@@ -99,10 +115,10 @@ impl Memory {
             /// Access internal RAM (is mirrored 4 times, total size 0x0800)
             0x0000..=0x1FFF => &mut self.ram[idx % 0x0800],
             /// Access the PPU, repeats every 8 bytes until 0x1FF8
-            0x2000..=0x3FFF => &mut self.ppu[idx % 0x0008],
-            0x4000..=0x4017 => &mut self.apu[idx],
-            0x4018..=0x401F => &mut self.test[idx],
-            0x4020..=0xFFFF => &mut self.cartridge[idx],
+            0x2000..=0x3FFF => &mut self.ppu[(idx - 0x2000) % 0x0008],
+            0x4000..=0x4017 => &mut self.apu[idx - 0x4000],
+            0x4018..=0x401F => &mut self.test[idx - 4018],
+            0x4020..=0xFFFF => &mut self.cartridge[idx - 0x4020],
         }
     }
     pub fn read(&mut self, addr: u16) -> u8 {
@@ -126,10 +142,6 @@ impl MemoryBus {
         let bytes = addr.to_le_bytes();
         self.low = bytes[0];
         self.high = bytes[1];
-    }
-    fn read(&mut self, addr: u16) -> u8 {
-        self.set(addr);
-        self.wire
     }
 }
 
@@ -157,41 +169,66 @@ impl State {
             op_state: Default::default(),
         }
     }
+    fn init(&mut self) {
+        let low = self.read_at(0xFFFC);
+        let high = self.read_at(0xFFFD);
+        println!("found: {:?}", (low, high));
+        println!("{:?}", &self.mem.cartridge[self.mem.cartridge.len()-20..]);
+        self.cpu.pc_set([low, high]);
+    }
     fn read(&mut self) {
         self.bus.wire = self.mem.read(u16::from_be_bytes([self.bus.high, self.bus.low]));
+    }
+    fn read_at(&mut self, addr: u16) -> u8 {
+        self.bus.set(addr);
+        self.read();
+        self.bus.wire
     }
     fn write(&mut self) {
         self.mem.write(u16::from_be_bytes([self.bus.high, self.bus.low]), self.bus.wire);
     }
     /// Run a single CPU cycle
-    fn step(&mut self, instr_set: [Vec<fn(&mut State)>; 256]) {
-        match self.op_state {
-            // If fetching op_state, get instr_idx, access from memory and set active op_state
-            OpState::Fetching => {
-                self.bus.set(self.cpu.pc); self.read();
-                self.instr_indx = self.bus.wire as usize;
-                self.cpu.pc += 1;
-                self.op_state = OpState::Active;
-            }
-            /// If Page cross, increment high page and set address
-            OpState::PageCross => {
-                self.bus.high += 1;
-                self.read();
-            }
-            // If not fetching, execute active instruction
-            OpState::Active => {
-                let instr_set = &instr_set[self.instr_indx];
+    fn step(&mut self, instr_set: [&'static [fn(&mut State)]; 256]) -> bool {
+        if self.op_state.contains(OpState::Active) {
+            if self.op_state.contains(OpState::PageCross | OpState::Branching) {
+                // Deal with branching before page cross
+                if self.op_state.contains(OpState::Branching) {
+                    self.op_state.remove(OpState::PageCross);
+                } else { // Deal with page cross
+                    self.bus.high += 1;
+                    self.read();
+                    self.op_state.remove(OpState::PageCross);
+                }
+            } else {
+                let instr_set = instr_set[self.instr_indx];
+                if instr_set.len() == 0 { return false }
                 instr_set[self.cycle_idx](self);
                 // If no more idx, reset OpState
                 if instr_set.len() == self.cycle_idx {
-                    self.op_state = OpState::Fetching;
+                    self.op_state.remove(OpState::Active);
                 }
             }
+        } else {
+            // Read new instruction
+            self.instr_indx = self.read_at(self.cpu.pc) as usize;
+            self.cpu.pc += 1;
+            self.op_state.insert(OpState::Active);
         }
+        false
     }
 }
 
-/// State to keep track of temporary values used between cycles while executing an instruction.
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct OpState: u8 {
+        const Active    = 0b0000_0001;
+        const PageCross = 0b0000_0010;
+        const Branching = 0b0000_0100;
+    }
+}
+
+/* /// State to keep track of temporary values used between cycles while executing an instruction.
 #[derive(Debug, Default)]
 pub enum OpState {
     /// Waiting for new instruction to be fetched
@@ -201,4 +238,6 @@ pub enum OpState {
     Active,
     /// There was a page cross when reading, increment high address before running next instruction.
     PageCross,
-}
+    /// A branch was triggered. u8 indicates 
+    Branching(u8),
+} */
