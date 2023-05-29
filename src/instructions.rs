@@ -5,7 +5,7 @@
 
 mod table;
 pub use table::INSTR_SET;
-use std::{collections::HashMap, ops::Shl, io::Read};
+use std::{collections::HashMap, ops::Shl, io::Read, marker::PhantomData};
 
 use crate::{State, CpuFlags, OpState};
 
@@ -100,6 +100,19 @@ struct SEI;
 impl MathOp for SEI {
     fn exec(state: &mut State) {
         state.cpu.flags.set(CpuFlags::InterruptDisable, true);
+    }
+}
+
+struct LD<I: Register>(PhantomData<I>);
+impl<I: Register> MathOp for LD<I> {
+    fn exec(state: &mut State) {
+        I::set(state, state.bus.wire);
+    }
+}
+struct ST<I: Register>(PhantomData<I>);
+impl<I: Register> MathOp for ST<I> {
+    fn exec(state: &mut State) {
+        state.bus.wire = I::get(state);
     }
 }
 
@@ -206,6 +219,11 @@ impl<const A: u16> ReadType for ConstRead<A> {
 trait Register {
     fn get(state: &State) -> u8;
     fn set(state: &mut State, val: u8);
+}
+struct Acc;
+impl Register for Acc {
+    fn get(state: &State) -> u8 { state.cpu.a }
+    fn set(state: &mut State, val: u8) { state.cpu.a = val; }
 }
 struct XIndex;
 impl Register for XIndex {

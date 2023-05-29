@@ -162,23 +162,23 @@ pub const INSTR_SET: [&'static [fn(&mut State)]; 256] = [
     &[], // x9E
     &[], // x9F
     &[], // xA0
-    &[], // xA1
+    /* LDA ($nn, X) */&indexed_indirect(read_op::<LD<Acc>>()), // xA1
     &[], // xA2
     &[], // xA3
     &[], // xA4
-    &[], // xA5
+    /* LDA $nn */&zeropage(read_op::<LD<Acc>>()), // xA5
     &[], // xA6
     &[], // xA7
     &[], // xA8
-    &immediate::<LDA>(), // xA9
+    /* LDA #$nn */&immediate::<LD<Acc>>(), // xA9
     &[], // xAA
     &[], // xAB
     &[], // xAC
-    &[], // xAD
+    /* LDA $nnnn */&absolute(read_op::<LD<Acc>>()), // xAD
     &[], // xAE
     &[], // xAF
     &[], // xB0
-    &[], // xB1
+    &indirect_indexed(read_op::<LD<Acc>>()), // xB1
     &[], // xB2
     &[], // xB3
     &[], // xB4
