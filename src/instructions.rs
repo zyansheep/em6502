@@ -25,8 +25,6 @@ impl MathOp for ADC {
         // Overflow is set if addition changed sign bit.
         state.cpu.flags.set(CpuFlags::Overflow, (state.cpu.a & 0b1000_0000) != (a_new & 0b1000_0000));
         state.cpu.a = a_new;
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -39,8 +37,6 @@ impl<I: Register> MathOp for CMP<I> {
         state.cpu.flags.set(CpuFlags::Carry, ordering.is_ge());
         state.cpu.flags.set(CpuFlags::Negative, ordering.is_lt());
         state.cpu.flags.set(CpuFlags::Zero, ordering.is_eq());
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -56,8 +52,6 @@ impl MathOp for SBC {
         state.cpu.flags.set(CpuFlags::Overflow, (state.cpu.a & 0b1000_0000) != (a_new & 0b1000_0000));
         state.cpu.flags.set(CpuFlags::Zero, a_new == 0);
         state.cpu.a = a_new;
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -69,8 +63,6 @@ impl MathOp for AND {
         state.cpu.a &= state.bus.wire;
         state.cpu.flags.set(CpuFlags::Negative, (state.cpu.a & 0b1000_0000) != 0);
         state.cpu.flags.set(CpuFlags::Zero, state.cpu.a == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -82,8 +74,6 @@ impl MathOp for ORA {
         state.cpu.a |= state.bus.wire;
         state.cpu.flags.set(CpuFlags::Negative, (state.cpu.a & 0b1000_0000) != 0);
         state.cpu.flags.set(CpuFlags::Zero, state.cpu.a == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -95,8 +85,6 @@ impl MathOp for EOR {
         state.cpu.a ^= state.bus.wire;
         state.cpu.flags.set(CpuFlags::Negative, (state.cpu.a & 0b1000_0000) != 0);
         state.cpu.flags.set(CpuFlags::Zero, state.cpu.a == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -109,9 +97,6 @@ impl MathOp for BIT {
         let res = state.cpu.a & state.bus.wire;
         state.cpu.flags.set(CpuFlags::Overflow, (state.bus.wire & 0b0100_0000) != 0);
         state.cpu.flags.set(CpuFlags::Negative, (res & 0b1000_0000) != 0);
-        state.cpu.flags.set(CpuFlags::Zero, res == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -128,8 +113,6 @@ impl<I: Register> MathOp for ASL<I> {
         state.cpu.flags.set(CpuFlags::Carry, carry);
         state.cpu.flags.set(CpuFlags::Negative, state.bus.wire & 0b1000_0000 != 0);
         state.cpu.flags.set(CpuFlags::Zero, reg == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 /// Rotate Left a Register (ASL but with input carry)
@@ -150,8 +133,6 @@ impl<I: Register> MathOp for ROL<I> {
         state.cpu.flags.set(CpuFlags::Carry, carry);
         state.cpu.flags.set(CpuFlags::Negative, reg & 0b1000_0000 != 0);
         state.cpu.flags.set(CpuFlags::Zero, reg == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -167,8 +148,6 @@ impl<I: Register> MathOp for LSR<I> {
         state.cpu.flags.set(CpuFlags::Carry, carry);
         state.cpu.flags.set(CpuFlags::Negative, false); // Negative bit is shifted in, so it is always false
         state.cpu.flags.set(CpuFlags::Zero, reg == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 /// Rotate Right a Register (Shift right but with input carry)
@@ -187,8 +166,6 @@ impl<I: Register> MathOp for ROR<I> {
         state.cpu.flags.set(CpuFlags::Carry, carry);
         state.cpu.flags.set(CpuFlags::Negative, input_carry); // MSB is one shifted in
         state.cpu.flags.set(CpuFlags::Zero, reg == 0);
-        // Jump to next instruction
-        state.cpu.pc += 1;
     }
 }
 
@@ -281,7 +258,7 @@ const fn relative<M: MathOp>() -> InstrPipeline<2> {
     [read_byte::<PCRead>, branch::<M>]
 }
 const fn absolute_indirect<M: MathOp>() -> InstrPipeline<4> {
-    [read_byte::<PCRead>, read_addr::<PCRead>, read_to_reg::<IncRead, LATCH>, reg_low_read_high_run::<LATCH, RegRead, JMP>]
+    [read_byte::<PCRead>, read_addr::<PCRead>, read_to_reg::<IncRead, LATCH>, read_high_reg_low::<LATCH, RegRead, JMP>]
 }
 
 const fn absolute<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{2 + A}> {
@@ -468,15 +445,15 @@ fn read_to_reg<R: ReadType, I: Register>(state: &mut State) {
 }
 
 /// sets higher byte from next memory location and sets lower byte from register. Runs MathOp
-fn reg_low_read_high_run<I: Register, R: ReadType, M: MathOp>(state: &mut State) {
-    // Read low from reg
-    state.bus.low = I::get(state);
-    
+fn read_high_reg_low<I: Register, R: ReadType, M: MathOp>(state: &mut State) {
     // Read high from mem
     R::pre(state);
     state.read();
     R::post(state);
     state.bus.high = state.bus.wire;
+
+    // Read low from reg
+    state.bus.low = I::get(state);
     
     // Run OP
     M::exec(state)

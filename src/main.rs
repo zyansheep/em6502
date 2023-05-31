@@ -44,9 +44,11 @@ fn main() -> Result<(), EmulatorError> {
     /* let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
     println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
      */
+    let mut i = 0;
     while state.step(INSTR_SET) {
         //println!("State: {state:?}");
-        
+        i += 1;
+        if i > 100 { println!("BROKE"); break; }
         //println!("Executing instruction: `{:?}` at byte 0x{:x?} in ROM", INSTR_SET[state.instr_indx].0, byte_num);
     }
 
@@ -237,6 +239,7 @@ impl State {
     }
     /// Run a single CPU cycle
     fn step(&mut self, instr_set: [(&'static str, &'static [fn(&mut State)]); 256]) -> bool {
+        if self.cpu.flags.contains(CpuFlags::Break) | self.cpu.flags.contains(CpuFlags::InterruptDisable) { return false }
         // If operation active
         if self.op_state.contains(OpState::Active) {
             let old = self.cpu.clone();
@@ -269,7 +272,7 @@ impl State {
             self.cycle_idx = 0;
             self.cpu.pc += 1;
             self.op_state.insert(OpState::Active);
-            println!("EXEC: `{:?}`", INSTR_SET[self.instr_indx].0);
+            println!("EXEC:                            `{:?}`", INSTR_SET[self.instr_indx].0);
         }
         self.cycle_count += 1;
         true
