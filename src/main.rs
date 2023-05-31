@@ -4,6 +4,7 @@
 #![feature(generic_arg_infer)]
 #![feature(generic_const_exprs)]
 #![feature(const_mut_refs)]
+#![feature(adt_const_params)]
 mod rom;
 mod instructions;
 use instructions::INSTR_SET;
