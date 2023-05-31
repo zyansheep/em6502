@@ -442,14 +442,13 @@ impl Register for BUS {
     fn set(state: &mut State, val: u8) { state.bus.wire = val; }
 }
 
-
 /// Push register onto stack
 fn push_stack<I: Register>(state: &mut State) {
-    state.cpu.sp = state.cpu.sp.wrapping_sub(1); // decrement stack pointer before pushing
     state.bus.wire = I::get(state);
     state.bus.high = 0x10;
     state.bus.low = state.cpu.sp;
     state.write();
+    state.cpu.sp = state.cpu.sp.wrapping_sub(1); // decrement stack pointer after writing
 }
 /// Pop from stack to register
 fn pop_stack<I: Register>(state: &mut State) {

@@ -41,12 +41,13 @@ fn main() -> Result<(), EmulatorError> {
 
     state.init();
     println!("Start: {state:?}");
-    let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
+    /* let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
     println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
-    
+     */
     while state.step(INSTR_SET) {
-        println!("State: {state:?}");
-        println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
+        //println!("State: {state:?}");
+        
+        //println!("Executing instruction: `{:?}` at byte 0x{:x?} in ROM", INSTR_SET[state.instr_indx].0, byte_num);
     }
 
     println!("Final: {state:?}");
@@ -69,7 +70,7 @@ bitflags::bitflags! {
 }
 
 /// Derived from: https://www.nesdev.org/wiki/CPU_registers and https://www.nesdev.org/wiki/Status_flags
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct CpuState {
     /// Accumulator Register
     a: u8,
@@ -104,6 +105,15 @@ impl CpuState {
     fn pc_get(&self) -> [u8; 2] { self.pc.to_le_bytes() }
     /// Set program counter with little-endian byte array
     fn pc_set(&mut self, pc: [u8; 2]) { self.pc = u16::from_le_bytes(pc) }
+    fn cmp(&self, new: &Self) {
+        if self.a != new.a { println!("A: 0x{:X?} -> 0x{:X?}", self.a, new.a) }
+        if self.x != new.x { println!("X: 0x{:X?} -> 0x{:X?}", self.x, new.x) }
+        if self.y != new.y { println!("Y: 0x{:X?} -> 0x{:X?}", self.y, new.y) }
+        if self.flags != new.flags { println!("FLAGS: {:?} -> {:?}", self.flags, new.flags) }
+        if self.sp != new.sp { println!("SP: 0x{:X?} -> 0x{:X?}", self.sp, new.sp) }
+        if self.latch != new.latch { println!("LATCH: 0x{:X?} -> 0x{:X?}", self.latch, new.latch) }
+        if self.pc != new.pc { println!("PC: 0x{:X?} -> 0x{:X?}", self.pc, new.pc) }
+    }
 }
 
 pub struct Memory {
@@ -117,6 +127,7 @@ pub struct Memory {
     test: [u8; 0x0008],
     /// Data mapped from cartridge, may be writable.
     cartridge: [u8; 0xBFE0],
+    bytes_unused: u16,
 }
 impl Memory {
     fn new() -> Self {
@@ -126,6 +137,7 @@ impl Memory {
             apu: [0u8; 0x0018],
             test: [0u8; 0x0008],
             cartridge: [0u8; 0xBFE0],
+            bytes_unused: 0xBFE0,
         }
     }
     fn mem_map(&mut self, addr: u16) -> &mut u8 {
@@ -140,10 +152,18 @@ impl Memory {
             0x4020..=0xFFFF => &mut self.cartridge[idx - 0x4020],
         }
     }
+    // Converts from Memory address to ROM address. Memory Addr may not be in rom.
+    pub fn mem_to_rom(&self, addr: u16) -> Option<u16> {
+        let rom_start = 0x4020u16 + self.bytes_unused;
+        if (rom_start..=0xFFFFu16).contains(&addr) { Some((addr - rom_start) + 0x10) } else { None }
+    }
     pub fn read(&mut self, addr: u16) -> u8 {
-        self.mem_map(addr).clone()
+        let out = self.mem_map(addr).clone();
+        println!("READ: 0x{addr:X?} = 0x{out:X?} ({:?})", self.mem_to_rom(addr).map_or(format!("??"), |x|format!("{:X?}", x)));
+        out
     }
     pub fn write(&mut self, addr: u16, val: u8) {
+        println!("WRITE: 0x{addr:X?} = 0x{val:X?} ({:?})", self.mem_to_rom(addr).map_or(format!("??"), |x|format!("{:X?}", x)));
         *self.mem_map(addr) = val;
     }
 }
@@ -216,9 +236,10 @@ impl State {
         self.mem.write(u16::from_be_bytes([self.bus.high, self.bus.low]), self.bus.wire);
     }
     /// Run a single CPU cycle
-    fn step(&mut self, instr_set: [&'static [fn(&mut State)]; 256]) -> bool {
+    fn step(&mut self, instr_set: [(&'static str, &'static [fn(&mut State)]); 256]) -> bool {
         // If operation active
         if self.op_state.contains(OpState::Active) {
+            let old = self.cpu.clone();
             // if page crossed or branching
             if self.op_state.contains(OpState::PageCross | OpState::Branching) {
                 // Deal with branching before page cross
@@ -230,7 +251,7 @@ impl State {
                     self.op_state.remove(OpState::PageCross);
                 }
             } else { // else deal with instruction
-                let instr_set = instr_set[self.instr_indx];
+                let instr_set = instr_set[self.instr_indx].1;
                 if instr_set.len() == 0 { println!("instr_set: {instr_set:?}"); return false }
 
                 // Run op on state
@@ -241,12 +262,14 @@ impl State {
                     self.op_state.remove(OpState::Active);
                 }
             }
+            old.cmp(&self.cpu);
         } else {
             // Read new instruction
             self.instr_indx = self.read_at(self.cpu.pc) as usize;
             self.cycle_idx = 0;
             self.cpu.pc += 1;
             self.op_state.insert(OpState::Active);
+            println!("EXEC: `{:?}`", INSTR_SET[self.instr_indx].0);
         }
         self.cycle_count += 1;
         true

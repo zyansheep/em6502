@@ -39,12 +39,15 @@ pub fn load_rom(path: &Path, state: &mut State) -> Result<Vec<u8>, ROMError> {
     let file = fs::read(path)?;
     let mut nes = file.as_slice();
 
+    let mut header = &nes[0..16];
+    nes.advance(16);
+
     /// Parse NES file format: https://www.nesdev.org/wiki/INES
-    if &nes[0..4] == b"NES\x1a" {
-        nes.advance(4);
-        let program_size = nes.get_u8() as usize * 16384;
-        let graphics_size = nes.get_u8() as usize * 8192;
-        let flags67 = nes.get_u16();
+    if &header[0..4] == b"NES\x1a" {
+        header.advance(4);
+        let program_size = header.get_u8() as usize * 16384;
+        let graphics_size = header.get_u8() as usize * 8192;
+        let flags67 = header.get_u16();
         let mapper_upper = ((flags67 << 4) as u8) & 0b0000_1111; // Get upper mapper bits
         let mapper = ((flags67 as u8) & 0b1111_0000) | mapper_upper; // Join upper with lower bits
         let flags_upper = ((flags67 << 8) as u8) & 0b0000_1111;
@@ -60,8 +63,9 @@ pub fn load_rom(path: &Path, state: &mut State) -> Result<Vec<u8>, ROMError> {
 
         // Copy ROM to cartridge ram.
         // It should be written so that it fits up to the very end of the address space
-        let start = state.mem.cartridge.len()-nes.len();
-        state.mem.cartridge[start..].copy_from_slice(&nes[..]);
+        let unused = state.mem.cartridge.len() - nes.len();
+        state.mem.cartridge[unused..].copy_from_slice(&nes[..]);
+        state.mem.bytes_unused = unused as u16;
         Ok(file)
     } else {
         // println!("{:x?} != {:x?}", &nes[0..4], b"NES\x1a");
