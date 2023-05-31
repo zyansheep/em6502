@@ -1,7 +1,7 @@
 pub use super::*;
 
 pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
-	("BRK",			&[read_byte::<PCRead>, push_stack::<PCH>, push_stack::<PCL>, push_stack::<BREAK_FLAGS>, read_to_reg::<ConstRead<0xFFFE>, PCL>, read_to_reg::<ConstRead<0xFFFF>, PCH>]), // x00
+	("BRK",			&[read_byte::<PCRead>, push_stack::<PCH>, push_stack::<PCL>, push_stack::<FLAGS_WITH_BREAK>, read_to_reg::<ConstRead<0xFFFE>, PCL>, read_high_reg_low::<ConstRead<0xFFFF>, PCL, BRK>]), // x00
 	("ORA ($nn,X)",	&indexed_indirect(read_op::<ORA>())), // x01
 	("*KIL",		&[]), // 02
 	("*SLO",		&[]), // 03
@@ -33,7 +33,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("ORA $nnnn,X",	&absolute_indexed::<XIndex, _>(read_op::<ORA>())), // x1D
 	("ASL $nnnn,X",	&absolute_indexed::<XIndex, _>(rw_op::<ASL<BUS>>())), // x1E
 	("*SLO",		&[]), // 1F
-	("JSR",			&[read_to_reg::<PCRead, LATCH>, run::<DEC<STACK_POINTER>>, push_stack::<PCH>, push_stack::<PCL>, read_high_reg_low::<LATCH, PCRead, JMP>]), // x20
+	("JSR",			&[read_to_reg::<PCRead, LATCH>, run::<DEC<STACK_POINTER>>, push_stack::<PCH>, push_stack::<PCL>, read_high_reg_low::<PCRead, LATCH, JMP>]), // x20
 	("AND ($nn,X)",	&indexed_indirect(read_op::<AND>())), // x21
 	("*KIL",		&[]), // 22
 	("*RLA",		&[]), // 23

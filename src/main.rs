@@ -7,12 +7,15 @@
 #![feature(adt_const_params)]
 mod rom;
 mod instructions;
+mod cpu;
+use bitflags::bitflags;
 use instructions::INSTR_SET;
+pub use cpu::*;
+use rom::{ROMError};
 
 use std::{path::PathBuf, io::{self, Read}, fs};
 
 use clap::{Parser};
-use rom::{ROMError};
 use thiserror::Error;
 
 #[derive(Parser)]
@@ -58,65 +61,6 @@ fn main() -> Result<(), EmulatorError> {
     Ok(())
 }
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-    struct CpuFlags: u8 {
-        const Negative = 0b10000000;
-        const Overflow = 0b01000000;
-        const Break    = 0b00010000;
-        const Decimal  = 0b00001000;
-        const Zero     = 0b00000010;
-        const Carry    = 0b00000001;
-        const InterruptDisable = 0b00000100;
-    }
-}
-
-/// Derived from: https://www.nesdev.org/wiki/CPU_registers and https://www.nesdev.org/wiki/Status_flags
-#[derive(Default, Clone)]
-struct CpuState {
-    /// Accumulator Register
-    a: u8,
-    /// X Index Register
-    x: u8,
-    /// Y Index Register
-    y: u8,
-    /// Status Flags
-    flags: CpuFlags,
-    /// Program Counter
-    pc: u16,
-    /// Stack Pointer
-    sp: u8,
-    /// Latch register for temporary holding
-    latch: u8,
-}
-impl std::fmt::Debug for CpuState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CpuState")
-        .field("a", &format_args!("0x{:X?}", &self.a))
-        .field("x", &format_args!("0x{:X?}", &self.x))
-        .field("y", &format_args!("0x{:X?}", &self.y))
-        .field("flags", &self.flags)
-        .field("pc", &format_args!("0x{:X?}", &self.pc))
-        .field("sp", &format_args!("0x{:X?}", &self.sp))
-        .field("latch", &format_args!("0x{:X?}", &self.latch))
-        .finish()
-    }
-}
-impl CpuState {
-    /// Get little endian byte array form of program counter
-    fn pc_get(&self) -> [u8; 2] { self.pc.to_le_bytes() }
-    /// Set program counter with little-endian byte array
-    fn pc_set(&mut self, pc: [u8; 2]) { self.pc = u16::from_le_bytes(pc) }
-    fn cmp(&self, new: &Self) {
-        if self.a != new.a { println!("A: 0x{:X?} -> 0x{:X?}", self.a, new.a) }
-        if self.x != new.x { println!("X: 0x{:X?} -> 0x{:X?}", self.x, new.x) }
-        if self.y != new.y { println!("Y: 0x{:X?} -> 0x{:X?}", self.y, new.y) }
-        if self.flags != new.flags { println!("FLAGS: {:?} -> {:?}", self.flags, new.flags) }
-        if self.sp != new.sp { println!("SP: 0x{:X?} -> 0x{:X?}", self.sp, new.sp) }
-        if self.latch != new.latch { println!("LATCH: 0x{:X?} -> 0x{:X?}", self.latch, new.latch) }
-        if self.pc != new.pc { println!("PC: 0x{:X?} -> 0x{:X?}", self.pc, new.pc) }
-    }
-}
 
 pub struct Memory {
     /// 2KB of internal RAM
@@ -148,9 +92,9 @@ impl Memory {
             /// Access internal RAM (is mirrored 4 times, total size 0x0800)
             0x0000..=0x1FFF => &mut self.ram[idx % 0x0800],
             /// Access the PPU, repeats every 8 bytes until 0x1FF8
-            0x2000..=0x3FFF => &mut self.ppu[(idx - 0x2000) % 0x0008],
-            0x4000..=0x4017 => &mut self.apu[idx - 0x4000],
-            0x4018..=0x401F => &mut self.test[idx - 4018],
+            0x2000..=0x3FFF => {panic!("accessed PPU"); &mut self.ppu[(idx - 0x2000) % 0x0008]},
+            0x4000..=0x4017 => {panic!("accessed APU"); &mut self.apu[idx - 0x4000]},
+            0x4018..=0x401F =>{panic!("accessed APU"); &mut self.test[idx - 4018]},
             0x4020..=0xFFFF => &mut self.cartridge[idx - 0x4020],
         }
     }
@@ -169,37 +113,16 @@ impl Memory {
         *self.mem_map(addr) = val;
     }
 }
-#[derive(Default)]
-struct MemoryBus {
-    /// Lower 8 bits of address
-    low: u8,
-    /// Upper 8 bits of address
-    high: u8,
-    /// In / Out 8 bits
-    wire: u8,
-}
-impl MemoryBus {
-    fn set(&mut self, addr: u16) {
-        let bytes = addr.to_le_bytes();
-        self.low = bytes[0];
-        self.high = bytes[1];
-    }
-}
-impl std::fmt::Debug for MemoryBus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoryBus")
-        .field("low", &format_args!("0x{:X?}", &self.low))
-        .field("high", &format_args!("0x{:X?}", &self.high))
-        .field("wire", &format_args!("0x{:X?}", &self.wire))
-        .finish()
-    }
+
+pub struct PPUState {
+    
 }
 
 /// Derived from: https://www.nesdev.org/wiki/CPU_memory_map
 pub struct State {
     mem: Memory,
-    bus: MemoryBus,
-    cpu: CpuState,
+    cpu: CPU,
+    ppu: PPU,
     /// Current instruction that may be executing
     instr_indx: usize,
     /// Current cycle of the current instruction executing
@@ -213,8 +136,8 @@ impl State {
     fn new() -> Self {
         State {
             mem: Memory::new(),
-            bus: Default::default(),
             cpu: Default::default(),
+            ppu: Default::default(),
             instr_indx: 0,
             cycle_idx: 0,
             cycle_count: 0,
@@ -227,19 +150,19 @@ impl State {
         self.cpu.pc_set([low, high]);
     }
     fn read(&mut self) {
-        self.bus.wire = self.mem.read(u16::from_be_bytes([self.bus.high, self.bus.low]));
+        self.cpu.io.wire = self.mem.read(u16::from_be_bytes([self.cpu.io.high, self.cpu.io.low]));
     }
     fn read_at(&mut self, addr: u16) -> u8 {
-        self.bus.set(addr);
+        self.cpu.io.set(addr);
         self.read();
-        self.bus.wire
+        self.cpu.io.wire
     }
     fn write(&mut self) {
-        self.mem.write(u16::from_be_bytes([self.bus.high, self.bus.low]), self.bus.wire);
+        self.mem.write(u16::from_be_bytes([self.cpu.io.high, self.cpu.io.low]), self.cpu.io.wire);
     }
     /// Run a single CPU cycle
     fn step(&mut self, instr_set: [(&'static str, &'static [fn(&mut State)]); 256]) -> bool {
-        if self.cpu.flags.contains(CpuFlags::Break) | self.cpu.flags.contains(CpuFlags::InterruptDisable) { return false }
+        // if self.cpu.flags.contains(CpuFlags::Break) | self.cpu.flags.contains(CpuFlags::InterruptDisable) { return false }
         // If operation active
         if self.op_state.contains(OpState::Active) {
             let old = self.cpu.clone();
@@ -249,7 +172,7 @@ impl State {
                 if self.op_state.contains(OpState::Branching) {
                     self.op_state.remove(OpState::PageCross);
                 } else { // Deal with page cross
-                    self.bus.high += 1;
+                    self.cpu.io.high += 1;
                     self.read();
                     self.op_state.remove(OpState::PageCross);
                 }
@@ -281,7 +204,7 @@ impl State {
 impl std::fmt::Debug for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("State")
-            .field("bus", &self.bus)
+            .field("bus", &self.cpu.io)
             .field("cpu", &self.cpu)
             .field("op_state", &self.op_state)
             .field("cycle_count", &self.cycle_count)
@@ -298,5 +221,66 @@ bitflags::bitflags! {
         const Active    = 0b0000_0001;
         const PageCross = 0b0000_0010;
         const Branching = 0b0000_0100;
+    }
+}
+
+struct PPU {
+    io: PPUIO,
+}
+
+#[derive(Default, Debug)]
+/// Manages the I/O state of the PPU
+struct PPUIO {
+    /// Control flags
+    ctrl: u8,
+    /// Mask flags
+    mask: u8,
+    /// Status flags
+    status: u8,
+    oam_addr: u8,
+    oam_data: u8,
+    scroll: u8,
+    addr: u8,
+
+    dma: u8,
+}
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub struct PPUCtrl: u8 {
+        /// Generate an NMI (Non-Maskable Interrupt) at the start of the vertical blanking interval (0: off; 1: on)
+        const VBlankNMI      = 0b1000_0000;
+        /// (0: read backdrop from EXT pins; 1: output color on EXT pins)
+        const EXTCtrlSelect  = 0b0100_0000;
+        /// Sprite size (0: 8x8 pixels; 1: 8x16 pixels – see PPU OAM#Byte 1)
+        const SpriteSize     = 0b0010_0000;
+        /// Background Pattern Table Addr: 0=$0000, 1=$1000
+        const BgPatTblAddr   = 0b0001_0000;
+        /// Sprite pattern table address for 8x8 sprites (0: $0000; 1: $1000; ignored in 8x16 mode)
+        const PatTblAddrType = 0b0000_1000;
+        /// VRAM address increment per CPU read/write of PPUDATA (0: add 1, going across; 1: add 32, going down)
+        const VRAMAddrInc    = 0b0000_0010;
+        /// Base Nametable Addr: 0=$2000, 1=$2400, 2=$2800, 3=$2C00
+        const BaseNameAddr = 0b0000_0011;
+    }
+}
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub struct PPUMask: u8 {
+        /// Emphasize blue
+        const EmphasizeBlue = 0b1000_0000;
+        /// Emphasize green (red on PAL/Dendy)
+        const EmphasizeGreen = 0b0100_0000;
+        /// Emphasize red (green on PAL/Dendy)
+        const EmphasizeRed = 0b0010_0000;
+        /// Show sprites (0: hide, 1: show)
+        const SpritesShow = 0b0001_0000;
+        /// Show background (0: hide, 1: show)
+        const BgShow = 0b0000_1000;
+        /// Show sprites in leftmost 8 pixels of screen (0: hide, 1: show)
+        const SpritesLeftmostShow = 0b0000_0100;
+        /// Show background in leftmost 8 pixels of screen (0: hide, 1: show)
+        const BgLeftmostShow = 0b0000_0010;
+        /// Produce a greyscale display (0: normal color, 1: greyscale)
+        const Greyscale = 0b0000_0001;
     }
 }
