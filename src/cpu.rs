@@ -6,6 +6,7 @@ bitflags::bitflags! {
         const Negative = 0b10000000;
         /// Overflow flag. Set an operation overflows in some form.
         const Overflow = 0b01000000;
+        const Unused   = 0b00100000;
         /// Break flag. Set in the copy of the Flags register that is pushed on the stack in the course of a BRK instruction.
         /// When RTI (return from interrupt) is performed, this will notify the code that the interrupt was caused internally by BRK as opposed to an external interrupt.
         const Break    = 0b00010000;

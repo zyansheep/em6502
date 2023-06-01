@@ -271,7 +271,7 @@ fn read_add_index<R: ReadType, I: Register>(state: &mut State) {
     state.read();
     R::post(state);
 
-    state.cpu.io.wire += I::get(state);
+    state.cpu.io.wire = state.cpu.io.wire.wrapping_add(I::get(state));
 }
 
 /// Increment wire by Y and store locally. do a read from somewhere, set new low to stored value and new high to read value. Optionally check for Page Crosses.
@@ -297,7 +297,6 @@ fn branch<M: MathOp>(state: &mut State) {
     M::exec(state); // Branch MathOp should store operand in cpu.latch and set OpState::Branching in op_state
     state.cpu.io.set(state.cpu.pc); // Useless read because the spec says so
     state.read();
-
     state.log.operand = Some(state.cpu.latch);
 
     if state.op_state.contains(OpState::Branching) {

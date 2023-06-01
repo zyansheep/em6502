@@ -53,8 +53,8 @@ pub fn load_rom(path: &Path, state: &mut State) -> Result<Vec<u8>, ROMError> {
         let flags_upper = ((flags67 << 8) as u8) & 0b0000_1111;
         let flags = NESFlags67::from_bits_retain(((flags67 as u8) << 4) | flags_upper);
 
-        println!("program_size: {program_size:?}, graphics_size: {graphics_size:?}");
-        println!("mapper: {mapper:#b}, flags: {flags:#b}");
+        //println!("program_size: {program_size:?}, graphics_size: {graphics_size:?}");
+        //println!("mapper: {mapper:#b}, flags: {flags:#b}");
 
         // Not dealing with Trainer region for now...
         if flags.contains(NESFlags67::Trainer) {

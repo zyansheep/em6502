@@ -37,10 +37,18 @@ impl MathOp for SBC {
         // Carry is the reverse ("complement") of carry flag.
         let (a_new, borrow) = state.cpu.a.borrowing_sub(state.cpu.io.wire, !state.cpu.flags.contains(CpuFlags::Carry));
         state.cpu.flags.set(CpuFlags::Carry, !borrow);
-        // Set overflow bit if most significant bit changed
-        state.cpu.flags.set(CpuFlags::Negative, (a_new & 0b1000_0000) != 0);
-        state.cpu.flags.set(CpuFlags::Overflow, (state.cpu.a & 0b1000_0000) != (a_new & 0b1000_0000));
+        // Set negative bit if most sign bit set
+        let res_sign = (a_new & 0b1000_0000) != 0;
+        state.cpu.flags.set(CpuFlags::Negative, res_sign);
+
+        // Calculate overflow using sign bits.
+        let a_sign = state.cpu.a & 0b1000_0000 != 0;
+        let bus_sign = state.cpu.io.wire & 0b1000_0000 != 0;
+        let overflow = (a_sign ^ bus_sign) & (a_sign ^ res_sign);
+        state.cpu.flags.set(CpuFlags::Overflow, overflow);
+        // Set zero flag
         state.cpu.flags.set(CpuFlags::Zero, a_new == 0);
+        // update accumulator
         state.cpu.a = a_new;
     }
 }
@@ -84,7 +92,8 @@ impl MathOp for BIT {
         // Perform tmp AND.
         let res = state.cpu.a & state.cpu.io.wire;
         state.cpu.flags.set(CpuFlags::Overflow, (state.cpu.io.wire & 0b0100_0000) != 0);
-        state.cpu.flags.set(CpuFlags::Negative, (res & 0b1000_0000) != 0);
+        state.cpu.flags.set(CpuFlags::Negative, (state.cpu.io.wire & 0b1000_0000) != 0);
+        state.cpu.flags.set(CpuFlags::Zero, res == 0);
     }
 }
 /// Shift Left a Register
@@ -176,7 +185,7 @@ impl<const FLAG: CpuFlags> MathOp for CL<FLAG> {
 pub struct SET<const FLAG: CpuFlags>;
 impl<const FLAG: CpuFlags> MathOp for SET<FLAG> {
     fn exec(state: &mut State) {
-        state.cpu.flags.remove(FLAG);
+        state.cpu.flags.insert(FLAG);
     }
 }
 
@@ -196,12 +205,30 @@ impl MathOp for NOP {
 }
 
 pub type ST<I> = TR<I, BUS>;
-pub type LD<I> = TR<BUS, I>;
+pub type LD<I> = Seq<TR<BUS, I>, LDFLAGS<I>>;
 /// Transfer byte from one register to another
 pub struct TR<I1: Register, I2: Register>(PhantomData<I1>, PhantomData<I2>);
 impl<I1: Register, I2: Register> MathOp for TR<I1, I2> {
     fn exec(state: &mut State) {
         I2::set(state, I1::get(state));
+    }
+}
+
+// Set zero and negative flags based on a given register
+pub struct LDFLAGS<I: Register>(PhantomData<I>);
+impl<I: Register> MathOp for LDFLAGS<I> {
+    fn exec(state: &mut State) {
+        let reg = I::get(state);
+        state.cpu.flags.set(CpuFlags::Zero, reg == 0);
+        state.cpu.flags.set(CpuFlags::Negative, reg & 0b1000_0000 != 0);
+    }
+}
+
+pub struct Seq<M1: MathOp, M2: MathOp>(PhantomData<M1>, PhantomData<M2>);
+impl<M1: MathOp, M2: MathOp> MathOp for Seq<M1, M2> {
+    fn exec(state: &mut State) {
+        M1::exec(state);
+        M2::exec(state);
     }
 }
 
