@@ -13,7 +13,7 @@ use instructions::INSTR_SET;
 pub use cpu::*;
 use rom::{ROMError};
 
-use std::{path::PathBuf, io::{self, Read}, fs};
+use std::{path::PathBuf, io::{self, Read, Write}, fs};
 
 use clap::{Parser};
 use thiserror::Error;
@@ -47,16 +47,18 @@ fn main() -> Result<(), EmulatorError> {
     /* let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
     println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
      */
-    let mut i = 0;
+    let mut i = 0u64;
     while state.step(INSTR_SET) {
         //println!("State: {state:?}");
         i += 1;
-        if i > 100 { println!("BROKE"); break; }
+        if i > 100000 { println!("BROKE"); break; }
         //println!("Executing instruction: `{:?}` at byte 0x{:x?} in ROM", INSTR_SET[state.instr_indx].0, byte_num);
     }
 
     println!("Final: {state:?}");
 
+    let mut file = std::fs::File::create("testing.ram").unwrap();
+    file.write_all(&state.mem.ram);
 
     Ok(())
 }
@@ -105,11 +107,11 @@ impl Memory {
     }
     pub fn read(&mut self, addr: u16) -> u8 {
         let out = self.mem_map(addr).clone();
-        println!("READ: 0x{addr:X?} = 0x{out:X?} ({:?})", self.mem_to_rom(addr).map_or(format!("??"), |x|format!("{:X?}", x)));
+        //println!("READ: {addr:#06X?} = {out:#04X?} {}", self.mem_to_rom(addr).map_or(String::new(), |x|format!("({:#06X?})", x)));
         out
     }
     pub fn write(&mut self, addr: u16, val: u8) {
-        println!("WRITE: 0x{addr:X?} = 0x{val:X?} ({:?})", self.mem_to_rom(addr).map_or(format!("??"), |x|format!("{:X?}", x)));
+        //println!("WRITE: {addr:#06X?} = {val:#04X?} ({:?})", self.mem_to_rom(addr).map_or(format!("??"), |x|format!("{:#06X?}", x)));
         *self.mem_map(addr) = val;
     }
 }
@@ -130,6 +132,34 @@ pub struct State {
     /// State of instruction executing
     op_state: OpState,
     cycle_count: usize,
+    log: Logging,
+}
+
+#[derive(Debug, Default, Clone)]
+struct Logging {
+    opcode: u8,
+    opcode_addr: u16,
+    // operand if has one
+    operand: Option<u8>,
+    // effective address if read/write memory
+}
+impl Logging {
+    fn new_instr(state: &mut State, opcode: u8, opcode_addr: u16) {
+        state.log = Logging {
+            opcode, opcode_addr, ..Default::default()
+        }
+    }
+    fn log(state: &mut State, instr_str: &str) {
+        println!("@{:06X?}{}: {}. Operand = {:?}",
+            state.log.opcode_addr,
+            state.mem.mem_to_rom(state.log.opcode_addr).map_or(String::new(), |x|format!("({:#06X?})", x)),
+            instr_str, state.log.operand
+        );
+    }
+    /* fn log_mem_op(state: &mut State, operand: u8) {
+        state.log.last_mem = u16::from_le_bytes([state.cpu.io.low, state.cpu.io.high]);
+        state.log.operand = Some(operand);
+    } */
 }
 
 impl State {
@@ -142,6 +172,7 @@ impl State {
             cycle_idx: 0,
             cycle_count: 0,
             op_state: Default::default(),
+            log: Default::default(),
         }
     }
     fn init(&mut self) {
@@ -161,42 +192,48 @@ impl State {
         self.mem.write(u16::from_be_bytes([self.cpu.io.high, self.cpu.io.low]), self.cpu.io.wire);
     }
     /// Run a single CPU cycle
-    fn step(&mut self, instr_set: [(&'static str, &'static [fn(&mut State)]); 256]) -> bool {
+    fn step(&mut self, instr_table: [(&'static str, &'static [fn(&mut State)]); 256]) -> bool {
+        let old = self.cpu.clone();
+        let old_op_state = self.op_state;
+        
         // if self.cpu.flags.contains(CpuFlags::Break) | self.cpu.flags.contains(CpuFlags::InterruptDisable) { return false }
-        // If operation active
-        if self.op_state.contains(OpState::Active) {
-            let old = self.cpu.clone();
+        
+        // Deal with branching and page crosses
+        if self.op_state.contains(OpState::Branching) {
+            self.op_state.remove(OpState::Branching);
+        } else if self.op_state.contains(OpState::PageCross) { // Deal with page cross
+            self.cpu.io.high = self.cpu.io.high.wrapping_add(1);
+            self.cpu.pc = self.cpu.pc.wrapping_add(0x0100);
+            self.read();
+            self.op_state.remove(OpState::PageCross);
+        } else if self.op_state.contains(OpState::Active) {
             // if page crossed or branching
-            if self.op_state.contains(OpState::PageCross | OpState::Branching) {
-                // Deal with branching before page cross
-                if self.op_state.contains(OpState::Branching) {
-                    self.op_state.remove(OpState::PageCross);
-                } else { // Deal with page cross
-                    self.cpu.io.high += 1;
-                    self.read();
-                    self.op_state.remove(OpState::PageCross);
-                }
-            } else { // else deal with instruction
-                let instr_set = instr_set[self.instr_indx].1;
-                if instr_set.len() == 0 { println!("instr_set: {instr_set:?}"); return false }
+            let instr_set = instr_table[self.instr_indx].1;
+            if instr_set.len() == 0 { println!("instr_set: {instr_set:?}"); return false }
 
-                // Run op on state
-                instr_set[self.cycle_idx](self);
-                // If no more idx, reset OpState
-                self.cycle_idx += 1;
-                if instr_set.len() == self.cycle_idx {
-                    self.op_state.remove(OpState::Active);
-                }
+            // Run op on state
+            instr_set[self.cycle_idx](self);
+            // If no more idx, reset OpState
+            self.cycle_idx += 1;
+            if instr_set.len() == self.cycle_idx {
+                self.op_state.remove(OpState::Active);
             }
-            old.cmp(&self.cpu);
         } else {
+            Logging::log(self, instr_table[self.instr_indx].0);
             // Read new instruction
             self.instr_indx = self.read_at(self.cpu.pc) as usize;
             self.cycle_idx = 0;
-            self.cpu.pc += 1;
+
+            // logging
+            Logging::new_instr(self, self.instr_indx as u8, self.cpu.pc);
+            
+
+            self.cpu.pc = self.cpu.pc.wrapping_add(1);
             self.op_state.insert(OpState::Active);
-            println!("EXEC:                            `{:?}`", INSTR_SET[self.instr_indx].0);
+            // println!("EXEC:                            `{:?}`", INSTR_SET[self.instr_indx].0);
         }
+        //old.cmp(&self.cpu);
+        // if old_op_state != self.op_state { println!("OP_STATE: {:?} -> {:?}", old_op_state, self.op_state); }
         self.cycle_count += 1;
         true
     }
@@ -224,17 +261,18 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Default, Debug, Clone)]
 struct PPU {
     io: PPUIO,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 /// Manages the I/O state of the PPU
 struct PPUIO {
     /// Control flags
-    ctrl: u8,
+    ctrl: PPUCtrl,
     /// Mask flags
-    mask: u8,
+    mask: PPUMask,
     /// Status flags
     status: u8,
     oam_addr: u8,

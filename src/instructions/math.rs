@@ -77,8 +77,6 @@ impl MathOp for EOR {
         state.cpu.flags.set(CpuFlags::Zero, state.cpu.a == 0);
     }
 }
-
-
 /// Performs AND with A and Memory Bus and sets flags.
 pub struct BIT;
 impl MathOp for BIT {
@@ -89,7 +87,6 @@ impl MathOp for BIT {
         state.cpu.flags.set(CpuFlags::Negative, (res & 0b1000_0000) != 0);
     }
 }
-
 /// Shift Left a Register
 pub struct ASL<I: Register>(PhantomData<I>);
 impl<I: Register> MathOp for ASL<I> {
@@ -98,10 +95,11 @@ impl<I: Register> MathOp for ASL<I> {
         // Carry bit is bit that is shifted out
         let carry = (reg & 0b1000_0000) != 0;
         // Do shift
-        I::set(state, reg << 1);
+        let reg = reg << 1;
+        I::set(state, reg);
         // Flags set accordingly
         state.cpu.flags.set(CpuFlags::Carry, carry);
-        state.cpu.flags.set(CpuFlags::Negative, state.cpu.io.wire & 0b1000_0000 != 0);
+        state.cpu.flags.set(CpuFlags::Negative, reg & 0b1000_0000 != 0);
         state.cpu.flags.set(CpuFlags::Zero, reg == 0);
     }
 }
@@ -197,8 +195,8 @@ impl MathOp for NOP {
     fn exec(state: &mut State) {}
 }
 
-pub type ST<I: Register> = TR<I, BUS>;
-pub type LD<I: Register> = TR<BUS, I>;
+pub type ST<I> = TR<I, BUS>;
+pub type LD<I> = TR<BUS, I>;
 /// Transfer byte from one register to another
 pub struct TR<I1: Register, I2: Register>(PhantomData<I1>, PhantomData<I2>);
 impl<I1: Register, I2: Register> MathOp for TR<I1, I2> {

@@ -9,7 +9,7 @@ pub use math::*;
 pub use table::INSTR_SET;
 use std::{collections::HashMap, ops::Shl, io::Read, marker::PhantomData, cmp::Ordering};
 
-use crate::{State, CpuFlags, OpState};
+use crate::{State, CpuFlags, OpState, Logging};
 
 type InstrPipeline<const S: usize> = [fn(&mut State); S];
 const fn implied<M: MathOp>() -> InstrPipeline<1> {
@@ -38,7 +38,7 @@ const fn zeropage_indexed<I: Register, const A: usize>(op: InstrPipeline<A>) -> 
     join([read_byte::<PCRead>, read_add_index::<ZeroRead, I>], op)
 }
 const fn indexed_indirect<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{4 + A}> {
-    join([read_byte::<PCRead>, read_add_index::<ZeroRead, XIndex>, read_byte::<ZeroRead>, read_addr::<RegRead>], op)
+    join([read_byte::<PCRead>, read_add_index::<ZeroRead, XIndex>, read_byte::<IncRead>, read_addr::<RegRead>], op)
 }
 const fn indirect_indexed<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{3 + A}> {
     join([read_byte::<PCRead>, read_byte::<ZeroRead>, add_index_low_read_high::<RegRead, YIndex>], op)
@@ -112,7 +112,7 @@ impl<const A: u16> ReadType for ConstRead<A> {
     const PAGE_CROSS: bool = false;
 }
 
-trait Register {
+pub trait Register {
     fn get(state: &State) -> u8;
     fn set(state: &mut State, val: u8);
 }
@@ -178,7 +178,7 @@ impl Register for STACK_POINTER {
     fn get(state: &State) -> u8 { state.cpu.sp }
     fn set(state: &mut State, val: u8) { state.cpu.sp = val; }
 }
-struct BUS;
+pub struct BUS;
 impl Register for BUS {
     fn get(state: &State) -> u8 { state.cpu.io.wire }
     fn set(state: &mut State, val: u8) { state.cpu.io.wire = val; }
@@ -238,7 +238,6 @@ fn read_byte_zero(state: &mut State) { read_byte::<ZeroRead>(state); } */
 fn read_addr<R: ReadType>(state: &mut State) {
     let low = state.cpu.io.wire;
     
-    state.cpu.io.low += 1;
     R::pre(state);
     state.read();
     R::post(state);
@@ -292,28 +291,31 @@ fn read_add_y<R: ReadType>(state: &mut State) {
         state.op_state = OpState::PageCross;
     }
 }
+
 /// Do branch to relative address if M sets OpState::Branching.
 fn branch<M: MathOp>(state: &mut State) {
     M::exec(state); // Branch MathOp should store operand in cpu.latch and set OpState::Branching in op_state
     state.cpu.io.set(state.cpu.pc); // Useless read because the spec says so
     state.read();
+    
+    state.log.operand = Some(state.cpu.latch);
 
     if state.op_state.contains(OpState::Branching) {
-        let (new_addr, overflow) = state.cpu.io.low.overflowing_add_signed(state.cpu.latch as i8);
+        let (new_addr, overflow) = state.cpu.io.low.overflowing_add(state.cpu.latch);
         // Set Page cross if overflow
         state.op_state.set(OpState::PageCross, overflow);
         // Update program counter
         state.cpu.pc = u16::from_le_bytes([new_addr, state.cpu.io.high]);
-    } else {
-        state.cpu.pc += 1;
     }
 }
-
 /// Running read-only instructions
 fn read_run<R: ReadType, M: MathOp>(state: &mut State) {
     R::pre(state);
     state.read();
     R::post(state);
+
+    state.log.operand = Some(state.cpu.io.wire);
+
     M::exec(state)
 }
 /// Running write-only instructions
@@ -324,6 +326,7 @@ fn write_run<M: MathOp>(state: &mut State) {
 /// Read for RW op
 fn read_eff(state: &mut State) {
     state.read();
+    state.log.operand = Some(state.cpu.io.wire);
 }
 /// Run RW op
 fn rw_run<M: MathOp>(state: &mut State) {

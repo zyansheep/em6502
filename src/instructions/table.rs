@@ -17,7 +17,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("ORA $nnnn",	&absolute(read_op::<ORA>())), // x0D
 	("ASL $nnnn",	&absolute(rw_op::<ASL<BUS>>())), // x0E
 	("*SLO",		&[]), // 0F
-	("BPL $nn",		&[branch::<Branch<{CpuFlags::Negative}, false>>]), // x10
+	("BPL $nn",		&relative::<Branch<{CpuFlags::Negative}, false>>()), // x10
 	("ORA ($nn),Y",	&indirect_indexed(read_op::<ORA>())), // x11
 	("*KIL",		&[]), // 12
 	("*SLO",		&[]), // 13
@@ -49,7 +49,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("AND $nnnn",	&absolute(read_op::<AND>())), // x2D
 	("ROL $nnnn",	&absolute(rw_op::<ROL<BUS>>())), // x2E
 	("*RLA",		&[]), // 2F
-	("BMI $nn",		&[branch::<Branch<{CpuFlags::Negative}, true>>]), // x30
+	("BMI $nn",		&relative::<Branch<{CpuFlags::Negative}, true>>()), // x30
 	("AND ($nn),Y",	&indirect_indexed(read_op::<AND>())), // x31
 	("*KIL",		&[]), // 32
 	("*RLA",		&[]), // 33
@@ -81,7 +81,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("EOR $nnnn",	&absolute(read_op::<EOR>())), // x4D
 	("LSR $nnnn",	&absolute(rw_op::<LSR<BUS>>())), // x4E
 	("SRE",			&[]), // 4F
-	("BVC $nn",		&[branch::<Branch<{CpuFlags::Overflow}, false>>]), // x50
+	("BVC $nn",		&relative::<Branch<{CpuFlags::Overflow}, false>>()), // x50
 	("EOR ($nn),Y",	&indirect_indexed(read_op::<EOR>())), // x51
 	("*KIL",		&[]), // 52
 	("SRE",			&[]), // 53
@@ -113,7 +113,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("ADC $nnnn",	&absolute(read_op::<ADC>())), // x6D
 	("ROR $nnnn",	&absolute(rw_op::<ROR<BUS>>())), // x6E
 	("RRA",			&[]), // 6F
-	("BVS $nn",		&[branch::<Branch<{CpuFlags::Overflow}, true>>]), // x70
+	("BVS $nn",		&relative::<Branch<{CpuFlags::Overflow}, true>>()), // x70
 	("ADC ($nn),Y",	&indirect_indexed(read_op::<ADC>())), // x71
 	("*KIL",		&[]), // 72
 	("RRA",			&[]), // 73
@@ -145,7 +145,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("STA $nnnn",	&absolute(write_op::<ST<Acc>>())), // x8D
 	("STX $nnnn",	&absolute(write_op::<ST<XIndex>>())), // x8E
 	("SAX",			&[]), // 8F
-	("BCC $nn",		&[branch::<Branch<{CpuFlags::Carry}, false>>]), // x90
+	("BCC $nn",		&relative::<Branch<{CpuFlags::Carry}, false>>()), // x90
 	("STA ($nn),Y",	&indirect_indexed(write_op::<ST<Acc>>())), // x91
 	("*KIL",		&[]), // 92
 	("AHX",			&[]), // 93
@@ -177,7 +177,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("LDA $nnnn",	&absolute(read_op::<LD<Acc>>())), // xAD
 	("LDX $nnnn",	&absolute(read_op::<LD<XIndex>>())), // xAE
 	("LAX",			&[]), // xAF
-	("BCS $nn",		&[branch::<Branch<{CpuFlags::Carry}, true>>]), // xB0
+	("BCS $nn",		&relative::<Branch<{CpuFlags::Carry}, true>>()), // xB0
 	("LDA ($nn),Y",	&indirect_indexed(read_op::<LD<Acc>>())), // xB1
 	("*KIL",		&[]), // xB2
 	("LAX ($nn),Y",	&[]), // xB3
@@ -209,7 +209,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("CMP $nnnn",	&absolute(read_op::<CMP<Acc>>())), // xCD
 	("DEC $nnnn",	&absolute(rw_op::<DEC<BUS>>())), // xCE
 	("*DCP",		&[]), // xCF
-	("BNE $nn",		&[branch::<Branch<{CpuFlags::Zero}, false>>]), // xD0
+	("BNE $nn",		&relative::<Branch<{CpuFlags::Zero}, false>>()), // xD0
 	("CMP ($nn),Y",	&indirect_indexed(read_op::<CMP<Acc>>())), // xD1
 	("*KIL",		&[]), // xD2
 	("*DCP ($nn),Y",&[]), // xD3
@@ -241,7 +241,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("SBC $nnnn",	&absolute(read_op::<SBC>())), // xED
 	("INC $nnnn",	&absolute(rw_op::<INC<BUS>>())), // xEE
 	("*ISC",		&[]), // xEF
-	("BEQ $nn",		&[branch::<Branch<{CpuFlags::Zero}, true>>]), // xF0
+	("BEQ $nn",		&relative::<Branch<{CpuFlags::Zero}, true>>()), // xF0
 	("SBC ($nn),Y",	&indirect_indexed(read_op::<SBC>())), // xF1
 	("*KIL",		&[]), // xF2
 	("*ISC",		&[]), // xF3
@@ -253,7 +253,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("SBC $nnnn,Y",	&absolute_indexed::<YIndex, _>(read_op::<SBC>())), // xF9
 	("*NOP",		&implied::<NOP>()), // xFA
 	("*ISC",		&[]), // xFB
-	("*NOP $nnnn,X",	&absolute_indexed::<XIndex, _>(read_op::<NOP>())), // xFC
+	("*NOP $nnnn,X",&absolute_indexed::<XIndex, _>(read_op::<NOP>())), // xFC
 	("SBC $nnnn,X",	&absolute_indexed::<XIndex, _>(read_op::<SBC>())), // xFD
 	("INC $nnnn,X",	&absolute_indexed::<XIndex, _>(rw_op::<INC<BUS>>())), // xFE
 	("*ISC",		&[]), // xFF
