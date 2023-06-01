@@ -63,9 +63,12 @@ pub fn load_rom(path: &Path, state: &mut State) -> Result<Vec<u8>, ROMError> {
 
         // Copy ROM to cartridge ram.
         // It should be written so that it fits up to the very end of the address space
-        let unused = state.mem.cartridge.len() - nes.len();
+        state.mem.cartridge[0x8000-0x4020..0xC000-0x4020].copy_from_slice(&nes[0..0x4000]);
+        state.mem.cartridge[0xC000-0x4020..=0xFFFF-0x4020].copy_from_slice(&nes[0..0x4000]);
+        /* let unused = state.mem.cartridge.len() - nes.len();
         state.mem.cartridge[unused..].copy_from_slice(&nes[..]);
-        state.mem.bytes_unused = unused as u16;
+        state.mem.bytes_unused = unused as u16; */
+        state.mem.bytes_unused = 0xC000-0x4020;
         Ok(file)
     } else {
         // println!("{:x?} != {:x?}", &nes[0..4], b"NES\x1a");

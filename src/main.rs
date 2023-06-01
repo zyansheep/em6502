@@ -150,10 +150,11 @@ impl Logging {
         }
     }
     fn log(state: &mut State, instr_str: &str) {
-        println!("@{:06X?}{}: {}. Operand = {:?}",
+        println!("@{:06X?}{}: {}. Operand = {:?}. {:?}",
             state.log.opcode_addr,
             state.mem.mem_to_rom(state.log.opcode_addr).map_or(String::new(), |x|format!("({:#06X?})", x)),
-            instr_str, state.log.operand
+            instr_str, state.log.operand,
+            stack: if state.log.opcode == 
         );
     }
     /* fn log_mem_op(state: &mut State, operand: u8) {
@@ -179,6 +180,7 @@ impl State {
         let low = self.read_at(0xFFFC);
         let high = self.read_at(0xFFFD);
         self.cpu.pc_set([low, high]);
+        self.cpu.pc = 0xC000;
     }
     fn read(&mut self) {
         self.cpu.io.wire = self.mem.read(u16::from_be_bytes([self.cpu.io.high, self.cpu.io.low]));
@@ -209,7 +211,7 @@ impl State {
         } else if self.op_state.contains(OpState::Active) {
             // if page crossed or branching
             let instr_set = instr_table[self.instr_indx].1;
-            if instr_set.len() == 0 { println!("instr_set: {instr_set:?}"); return false }
+            if instr_set.len() == 0 { Logging::log(self, instr_table[self.instr_indx].0); return false }
 
             // Run op on state
             instr_set[self.cycle_idx](self);

@@ -190,15 +190,15 @@ fn push_stack<I: Register>(state: &mut State) {
     state.cpu.io.high = 0x10;
     state.cpu.io.low = state.cpu.sp;
     state.write();
-    state.cpu.sp = state.cpu.sp.wrapping_sub(1); // decrement stack pointer after writing
+    state.cpu.sp = state.cpu.sp.wrapping_sub(1); // decrement stack pointer after pushing
 }
 /// Pop from stack to register
 fn pop_stack<I: Register>(state: &mut State) {
+    state.cpu.sp = state.cpu.sp.wrapping_add(1); // increment stack pointer after popping
     state.cpu.io.high = 0x10;
     state.cpu.io.low = state.cpu.sp;
     state.read();
     I::set(state, state.cpu.io.wire);
-    state.cpu.sp = state.cpu.sp.wrapping_add(1); // increment stack pointer after popping
 }
 
 /// Reads current byte to register and increments address
@@ -297,7 +297,7 @@ fn branch<M: MathOp>(state: &mut State) {
     M::exec(state); // Branch MathOp should store operand in cpu.latch and set OpState::Branching in op_state
     state.cpu.io.set(state.cpu.pc); // Useless read because the spec says so
     state.read();
-    
+
     state.log.operand = Some(state.cpu.latch);
 
     if state.op_state.contains(OpState::Branching) {

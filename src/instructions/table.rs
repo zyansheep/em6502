@@ -97,7 +97,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("EOR $nnnn,X",	&absolute_indexed::<XIndex, _>(read_op::<EOR>())), // x5D
 	("LSR $nnnn,X",	&absolute_indexed::<XIndex, _>(rw_op::<LSR<BUS>>())), // x5E
 	("SRE",			&[]), // 5F
-	("RTS",			&[read_byte::<PCRead>, pop_stack::<BUS>, pop_stack::<PCL>, pop_stack::<PCH>]), // x60
+	("RTS",			&[read_byte::<RegRead>, pop_stack::<BUS>, pop_stack::<PCL>, pop_stack::<PCH>, read_byte::<PCRead>]), // x60
 	("ADC ($nn,X)",	&indexed_indirect(read_op::<ADC>())), // x61
 	("*KIL",		&[]), // 62
 	("RRA",			&[]), // 63
