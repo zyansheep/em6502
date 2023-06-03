@@ -78,6 +78,7 @@ impl Register for FLAGS_REMOVE_BREAK {
     fn set(state: &mut State, val: u8) {
         state.cpu.flags = CpuFlags::from_bits_retain(val);
         state.cpu.flags.remove(CpuFlags::Break);
+        state.cpu.flags.insert(CpuFlags::Unused);
     }
 }
 /// CPU Flags register
@@ -88,6 +89,7 @@ impl Register for FLAGS {
     }
     fn set(state: &mut State, val: u8) {
         state.cpu.flags = CpuFlags::from_bits_retain(val);
+        state.cpu.flags.insert(CpuFlags::Unused);
     }
 }
 

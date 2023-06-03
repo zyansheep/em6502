@@ -109,11 +109,16 @@ impl MathOp for ADC {
         // Unsigned addition overflow changes the carry flag
         let (a_new, carry) = state.cpu.a.carrying_add(state.cpu.io.wire, state.cpu.flags.contains(CpuFlags::Carry));
         state.cpu.flags.set(CpuFlags::Carry, carry);
-        state.cpu.flags.set(CpuFlags::Negative, (a_new & 0b1000_0000) != 0);
-        state.cpu.flags.set(CpuFlags::Zero, a_new == 0);
-        // Overflow is set if addition changed sign bit.
-        state.cpu.flags.set(CpuFlags::Overflow, (state.cpu.a & 0b1000_0000) != (a_new & 0b1000_0000));
+        // Calculate overflow using sign bits.
+        let a_sign = state.cpu.a & 0b1000_0000 != 0;
+        let bus_sign = state.cpu.io.wire & 0b1000_0000 != 0;
+        let res_sign = (a_new & 0b1000_0000) != 0;
+        let overflow = (a_sign ^ res_sign) & (bus_sign ^ res_sign);
+        state.cpu.flags.set(CpuFlags::Overflow, overflow);
+
         state.cpu.a = a_new;
+        // Set other flags
+        SetDefaultFlags::<ACC>::exec(state);
     }
 }
 
@@ -125,10 +130,12 @@ pub struct CMP<I: Register>(PhantomData<I>);
 impl<I: Register> MathOp for CMP<I> {
     fn exec(state: &mut State) {
         // Unsigned addition overflow changes the carry flag
-        let ordering = I::get(state).cmp(&state.cpu.io.wire);
-        state.cpu.flags.set(CpuFlags::Carry, ordering.is_ge());
-        state.cpu.flags.set(CpuFlags::Negative, ordering.is_lt());
-        state.cpu.flags.set(CpuFlags::Zero, ordering.is_eq());
+        let reg = I::get(state);
+        let (res, borrow) = reg.borrowing_sub(state.cpu.io.wire, false);
+        println!("{:02X?} - {:02X?} = {:02X?} + {borrow}", reg, state.cpu.io.wire, res);
+        state.cpu.flags.set(CpuFlags::Carry, !borrow);
+        state.cpu.flags.set(CpuFlags::Negative, (res & 0b1000_0000) != 0);
+        state.cpu.flags.set(CpuFlags::Zero, res == 0);
     }
 }
 
@@ -290,7 +297,8 @@ impl<const FLAG: CpuFlags> MathOp for SET<FLAG> {
 pub struct Branch<const FLAG: CpuFlags, const STATE: bool>;
 impl<const FLAG: CpuFlags, const STATE: bool> MathOp for Branch<FLAG, STATE> {
     fn exec(state: &mut State) {
-        /// Check if specific cpu FLAG equals required STATE
+        state.cpu.first = Some(state.cpu.io.wire);
+        // Check if specific cpu FLAG equals required STATE
         if state.cpu.flags.contains(FLAG) == STATE {
             state.op_state.set(OpState::Branching, true);
             /// If branching, add operand to MEM_LOW, checking for page cross

@@ -41,7 +41,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("AND $nn",		&zeropage(read_op::<AND>())), // 25
 	("ROL $nn",		&zeropage(read_op::<ROL<BUS>>())), // 26
 	("*RLA $nn",	&[]), // 27
-	("PLP",			&pull_stack::<FLAGS_REMOVE_BREAK>()), // 28
+	("PLP",			&pull_stack::<FLAGS_REMOVE_BREAK, NOP>()), // 28
 	("AND #$nn",	&immediate::<AND>()), // 29
 	("ROL A",		&implied::<ROL<ACC>>()), // 2A
 	("ANC",			&[]), // 2B
@@ -105,7 +105,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("ADC $nn",		&zeropage(read_op::<ADC>())), // 65
 	("ROR $nn",		&zeropage(rw_op::<ROR<BUS>>())), // 66
 	("RRA",			&[]), // 67
-	("PLA",			&pull_stack::<ACC>()), // 68
+	("PLA",			&pull_stack::<ACC, SetDefaultFlags<ACC>>()), // 68
 	("ADC #$nn",	&immediate::<ADC>()), // 69
 	("ROR A",		&implied::<ROR<ACC>>()), // 6A
 	("ARR",			&[]), // 6B
@@ -193,7 +193,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("LDA $nnnn,X",	&absolute_indexed::<X, _>(read_op::<LDF<ACC>>())), // BD
 	("LDX $nnnn,Y",	&absolute_indexed::<Y, _>(read_op::<LDF<X>>())), // BE
 	("LAX",			&[]), // BF
-	("CPY #$nn",	&immediate::<CMP<ACC>>()), // C0
+	("CPY #$nn",	&immediate::<CMP<Y>>()), // C0
 	("CMP ($nn,X)",	&indexed_indirect(read_op::<CMP<ACC>>())), // C1
 	("*NOP",		&[]), // C2
 	("*DCP",		&[]), // C3
@@ -225,11 +225,11 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("CMP $nnnn,X",	&absolute_indexed::<X, _>(read_op::<CMP<ACC>>())), // DD
 	("DEC $nnnn,X",	&absolute_indexed::<X, _>(rw_op::<DEC<BUS>>())), // DE
 	("*DCP",		&[]), // DF
-	("CPX #$nn",	&immediate::<CMP<ACC>>()), // E0
+	("CPX #$nn",	&immediate::<CMP<X>>()), // E0
 	("SBC ($nn,X)",	&indexed_indirect(read_op::<SBC>())), // E1
 	("*NOP",		&[]), // E2
 	("*ISC $nn",	&[]), // E3
-	("CPX $nn",		&zeropage(read_op::<CMP<ACC>>())), // E4
+	("CPX $nn",		&zeropage(read_op::<CMP<X>>())), // E4
 	("SBC $nn",		&zeropage(read_op::<SBC>())), // E5
 	("INC $nn",		&zeropage(rw_op::<INC<BUS, true>>())), // E6
 	("*ISC",		&[]), // E7
@@ -237,7 +237,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("SBC #$nn",	&immediate::<SBC>()), // E9
 	("NOP",			&implied::<NOP>()), // EA
 	("SBC",			&[]), // EB
-	("CPX $nnnn",	&absolute(read_op::<CMP<ACC>>())), // EC
+	("CPX $nnnn",	&absolute(read_op::<CMP<X>>())), // EC
 	("SBC $nnnn",	&absolute(read_op::<SBC>())), // ED
 	("INC $nnnn",	&absolute(rw_op::<INC<BUS, true>>())), // EE
 	("*ISC",		&[]), // EF

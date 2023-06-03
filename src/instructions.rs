@@ -73,11 +73,11 @@ const fn push_stack<R: Register>() -> InstrPipeline<2> {
     ]
 }
 /// Pull register from stack (PLA, PLP)
-const fn pull_stack<R: Register>() -> InstrPipeline<3> {
+const fn pull_stack<R: Register, E: MathOp>() -> InstrPipeline<3> {
     [
         read::<SetAddrPC, NOP>, // read next instruction byte (and throw it away)
         read::<NOP, INC<SP>>,
-        read::<SetAddrStack, ReadBUS<R>>,
+        read::<SetAddrStack, Seq<ReadBUS<R>, E>>,
     ]
 }
 

@@ -3,21 +3,21 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
     pub struct CpuFlags: u8 {
         /// Negative flag. Set if the operation output's sign bit is set.
-        const Negative = 0b10000000;
+        const Negative         = 0b10000000;
         /// Overflow flag. Set an operation overflows in some form.
-        const Overflow = 0b01000000;
-        const Unused   = 0b00100000;
+        const Overflow         = 0b01000000;
+        const Unused           = 0b00100000;
         /// Break flag. Set in the copy of the Flags register that is pushed on the stack in the course of a BRK instruction.
         /// When RTI (return from interrupt) is performed, this will notify the code that the interrupt was caused internally by BRK as opposed to an external interrupt.
-        const Break    = 0b00010000;
+        const Break            = 0b00010000;
         /// Decimal flag
-        const Decimal  = 0b00001000;
-        /// Zero flag. Set when the output of an operation is zero
-        const Zero     = 0b00000010;
-        /// Carry flag. used for big-num operations and other things
-        const Carry    = 0b00000001;
+        const Decimal          = 0b00001000;
         /// Prevents the Processor from responding to IRQs (Interrupt Requests). Used in time-sensitive Code
         const InterruptDisable = 0b00000100;
+        /// Zero flag. Set when the output of an operation is zero
+        const Zero             = 0b00000010;
+        /// Carry flag. used for big-num operations and other things
+        const Carry            = 0b00000001;
     }
 }
 
