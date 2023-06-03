@@ -44,11 +44,11 @@ fn main() -> Result<(), EmulatorError> {
 
     state.reset();
     // println!("Start: {state:?}");
-    /* let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
-    println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
-     */
+    let unused_bytes = state.mem.cartridge.len() - (rom.len() - 0x10);
+    // println!("Executing byte 0x{:x?} in ROM", state.cpu.pc - 0x4020 - (unused_bytes as u16) + 0x10);
+    
     while state.step() {
-        //println!("State: {state:?}");
+        // println!("State: {state:?}");
         if state.instr_count > 9000 { println!("BROKE"); break; }
         // if state.cpu.pc == 0 { println!("reached end"); break }
         //println!("Executing instruction: `{:?}` at byte 0x{:x?} in ROM", INSTR_SET[state.instr_indx].0, byte_num);
@@ -106,11 +106,11 @@ impl Memory {
     }
     pub fn read(&mut self, addr: u16) -> u8 {
         let out = self.mem_map(addr).clone();
-        //println!("READ: {addr:#06X?} = {out:#04X?} {}", self.mem_to_rom(addr).map_or(String::new(), |x|format!("({:#06X?})", x)));
+        // println!("READ: {addr:#06X?} = {out:#04X?} {}", self.mem_to_rom(addr).map_or(String::new(), |x|format!("({:#06X?})", x)));
         out
     }
     pub fn write(&mut self, addr: u16, val: u8) {
-        //println!("WRITE: {addr:#06X?} = {val:#04X?} ({:?})", self.mem_to_rom(addr).map_or(format!("??"), |x|format!("{:#06X?}", x)));
+        // println!("WRITE: {addr:#06X?} = {val:#04X?} ({:?})", self.mem_to_rom(addr).map_or(format!("??"), |x|format!("{:#06X?}", x)));
         *self.mem_map(addr) = val;
     }
 }
@@ -141,16 +141,20 @@ struct Logging {
     opcode_addr: u16,
     // operand if has one
     operand: Option<u8>,
+    start_cycle: usize,
+    start_cpu: CPU,
     // effective address if read/write memory
 }
 impl Logging {
     fn new_instr(state: &mut State, opcode: u8, opcode_addr: u16) {
         state.log = Logging {
-            opcode, opcode_addr, ..Default::default()
+            opcode, opcode_addr, start_cycle: state.cycle_count, start_cpu: state.cpu.clone(),
+            ..Default::default()
         }
     }
     fn log(state: &mut State, instr_str: &str) {
-        let cpu_str = format!("A:{:02X?}, X:{:02X?}, Y:{:02X?}, P:{:02X?}, SP:{:02X?}   CYC: {}", state.cpu.a, state.cpu.x, state.cpu.y, state.cpu.flags.bits(), state.cpu.sp, state.cycle_count);
+        let cpu = &state.log.start_cpu;
+        let cpu_str = format!("A:{:02X?}, X:{:02X?}, Y:{:02X?}, P:{:02X?}, SP:{:02X?}   CYC: {}", cpu.a, cpu.x, cpu.y, cpu.flags.bits(), cpu.sp, state.log.start_cycle);
         let main_str = format!("{:04X?}{}: {:02X?} {}. {}",
             state.log.opcode_addr,
             state.mem.mem_to_rom(state.log.opcode_addr).map_or(String::new(), |x|format!("({:#06X?})", x)),
@@ -186,7 +190,7 @@ impl State {
         let high = self.read_at(0xFFFD);
         self.cpu.pc = 0xC000;
         // self.cpu.pc_set([low, high]);
-        self.cycle_count = 6;
+        self.cycle_count = 7;
         self.cpu.flags = CpuFlags::Unused | CpuFlags::InterruptDisable;
         self.cpu.sp = 0xFD;
         self.read();
@@ -217,7 +221,7 @@ impl State {
     }
     /// Run a single CPU cycle
     fn step(&mut self) -> bool {
-        let old = self.cpu.clone();
+        let old_cpu = self.cpu.clone();
         let old_op_state = self.op_state;
         
         // if self.cpu.flags.contains(CpuFlags::Break) | self.cpu.flags.contains(CpuFlags::InterruptDisable) { return false }
@@ -225,7 +229,7 @@ impl State {
         // Deal with branching and page crosses
         if self.op_state.contains(OpState::Branching) {
             self.op_state.remove(OpState::Branching);
-            self.read_instr();
+            self.op_state.remove(OpState::Active);
         } else if self.op_state.contains(OpState::PageCross) { // Deal with page cross
             self.cpu.io.high = self.cpu.io.high.wrapping_add(1);
             self.cpu.pc = self.cpu.pc.wrapping_add(0x0100);
@@ -254,12 +258,9 @@ impl State {
 impl std::fmt::Debug for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("State")
-            .field("bus", &self.cpu.io)
+            .field("op_s", &self.op_state)
+            .field("cc", &self.cycle_count)
             .field("cpu", &self.cpu)
-            .field("op_state", &self.op_state)
-            .field("cycle_count", &self.cycle_count)
-            .field("instr_indx", &format_args!("0x{:x?}", &self.instr_indx))
-            .field("cycle_idx", &self.cycle_idx)
             .finish()
     }
 }

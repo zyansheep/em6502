@@ -5,57 +5,16 @@
 
 mod table;
 mod math;
+mod reg;
 pub use math::*;
+pub use reg::*;
 pub use table::INSTR_SET;
-use std::{collections::HashMap, ops::Shl, io::Read, marker::PhantomData, cmp::Ordering};
+use std::{collections::HashMap, ops::Shl, io::Read, marker::PhantomData, cmp::Ordering, fmt::Write};
 
 use crate::{State, CpuFlags, OpState, Logging};
 
-type InstrPipeline<const S: usize> = [fn(&mut State); S];
-const fn implied<M: MathOp>() -> InstrPipeline<1> {
-    [run::<M>]
-}
-const fn immediate<M: MathOp>() -> InstrPipeline<1> {
-    [read_run::<PCRead, M>]
-}
-const fn relative<M: MathOp>() -> InstrPipeline<2> {
-    [read_byte::<PCRead>, branch::<M>]
-}
-const fn absolute_indirect<M: MathOp>() -> InstrPipeline<4> {
-    [read_byte::<PCRead>, read_addr::<PCRead>, read_to_reg::<IncRead, LATCH>, read_high_reg_low::<RegRead, LATCH, JMP>]
-}
-
-const fn absolute<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{2 + A}> {
-    join([read_byte::<PCRead>, read_addr::<PCRead>], op)
-}
-const fn absolute_indexed<I: Register, const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{2 + A}> {
-    join([read_byte::<PCRead>, add_index_low_read_high::<PCRead, I>], op)
-}
-const fn zeropage<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{1 + A}> {
-    join([read_byte::<PCRead>], op)
-}
-const fn zeropage_indexed<I: Register, const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{2 + A}> {
-    join([read_byte::<PCRead>, read_add_index::<ZeroRead, I>], op)
-}
-const fn indexed_indirect<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{4 + A}> {
-    join([read_byte::<PCRead>, read_add_index::<ZeroRead, XIndex>, read_byte::<IncRead>, read_addr::<RegRead>], op)
-}
-const fn indirect_indexed<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{3 + A}> {
-    join([read_byte::<PCRead>, read_byte::<ZeroRead>, add_index_low_read_high::<RegRead, YIndex>], op)
-}
-
-const fn read_op<M: MathOp>() -> InstrPipeline<1> {
-    [read_run::<RegRead, M>]
-}
-const fn write_op<M: MathOp>() -> InstrPipeline<1> {
-    [write_run::<M>]
-}
-const fn rw_op<M: MathOp>() -> InstrPipeline<3> {
-    [read_eff, rw_run::<M>, write_eff]
-}
-
 const fn join<const A: usize, const B: usize>(a: InstrPipeline<A>, b: InstrPipeline<B>) -> InstrPipeline<{A + B}> {
-    let mut out: [fn(&mut State); {A + B}] = [read_byte::<PCRead>; {A + B}];
+    let mut out: [fn(&mut State); {A + B}] = [State::read; {A + B}];
     let mut i = 0;
     while i < A {
         out[i] = a[i];
@@ -67,276 +26,145 @@ const fn join<const A: usize, const B: usize>(a: InstrPipeline<A>, b: InstrPipel
     }
     out
 }
-
-
-/// Things that a given micro op should do pre and post-reading.
-trait ReadType {
-    fn pre(state: &mut State) {}
-    fn post(state: &mut State) {}
-    const PAGE_CROSS: bool = true;
+/// Exec B, read, exec A.
+fn read<B: MathOp, A: MathOp>(state: &mut State) {
+    B::exec(state);
+    state.read();
+    A::exec(state);
 }
-
-/// Do nothing
-struct RegRead;
-impl ReadType for RegRead {}
-/// Read the next memory address, not handling page crossing
-struct IncRead;
-impl ReadType for IncRead {
-    fn post(state: &mut State) { state.cpu.io.low += 1; }
-    const PAGE_CROSS: bool = false;
-}
-
-/// Increment read from program counter and increment pc after reading.
-struct PCRead;
-impl ReadType for PCRead {
-    fn pre(state: &mut State) {
-        state.cpu.io.set(state.cpu.pc);
-    }
-    fn post(state: &mut State) {
-        state.cpu.pc += 1;
-    }
-}
-
-/// Sets bus high byte to zero.
-struct ZeroRead;
-impl ReadType for ZeroRead {
-    fn pre(state: &mut State) {
-        state.cpu.io.low = state.cpu.io.wire;
-        state.cpu.io.high = 0;
-    }
-    const PAGE_CROSS: bool = false;
-}
-struct ConstRead<const A: u16>;
-impl<const A: u16> ReadType for ConstRead<A> {
-    fn pre(state: &mut State) { state.cpu.io.set(A) }
-    const PAGE_CROSS: bool = false;
-}
-
-pub trait Register {
-    fn get(state: &State) -> u8;
-    fn set(state: &mut State, val: u8);
-}
-struct Acc;
-impl Register for Acc {
-    fn get(state: &State) -> u8 { state.cpu.a }
-    fn set(state: &mut State, val: u8) { state.cpu.a = val; }
-}
-struct XIndex;
-impl Register for XIndex {
-    fn get(state: &State) -> u8 { state.cpu.x }
-    fn set(state: &mut State, val: u8) { state.cpu.x = val; }
-}
-struct YIndex;
-impl Register for YIndex {
-    fn get(state: &State) -> u8 { state.cpu.y }
-    fn set(state: &mut State, val: u8) { state.cpu.y = val; }
-}
-struct PCL;
-impl Register for PCL {
-    fn get(state: &State) -> u8 { state.cpu.pc_get()[0] }
-    fn set(state: &mut State, val: u8) {
-        let mut pc = state.cpu.pc_get();
-        pc[0] = val;
-        state.cpu.pc_set(pc);
-    }
-}
-struct PCH;
-impl Register for PCH {
-    fn get(state: &State) -> u8 { state.cpu.pc_get()[1] }
-    fn set(state: &mut State, val: u8) {
-        let mut pc = state.cpu.pc_get();
-        pc[1] = val;
-        state.cpu.pc_set(pc);
-    }
-}
-struct LATCH;
-impl Register for LATCH {
-    fn get(state: &State) -> u8 { state.cpu.latch }
-    fn set(state: &mut State, val: u8) { state.cpu.latch = val; }
-}
-struct FLAGS;
-impl Register for FLAGS {
-    fn get(state: &State) -> u8 {
-        state.cpu.flags.bits()
-    }
-    fn set(state: &mut State, val: u8) {
-        state.cpu.flags = CpuFlags::from_bits_retain(val);
-    }
-}
-/// CPU Flags register, but with Break value set
-struct FLAGS_WITH_BREAK;
-impl Register for FLAGS_WITH_BREAK {
-    fn get(state: &State) -> u8 {
-        state.cpu.flags.union(CpuFlags::Break).bits()
-    }
-    fn set(state: &mut State, val: u8) {
-        state.cpu.flags = CpuFlags::from_bits_retain(val);
-    }
-}
-struct STACK_POINTER;
-impl Register for STACK_POINTER {
-    fn get(state: &State) -> u8 { state.cpu.sp }
-    fn set(state: &mut State, val: u8) { state.cpu.sp = val; }
-}
-pub struct BUS;
-impl Register for BUS {
-    fn get(state: &State) -> u8 { state.cpu.io.wire }
-    fn set(state: &mut State, val: u8) { state.cpu.io.wire = val; }
-}
-
-/// Push register onto stack
-fn push_stack<I: Register>(state: &mut State) {
-    state.cpu.io.wire = I::get(state);
-    state.cpu.io.high = 0x10;
-    state.cpu.io.low = state.cpu.sp;
+/// Exec B, write, exec A.
+fn write<B: MathOp, A: MathOp>(state: &mut State) {
+    B::exec(state);
     state.write();
-    state.cpu.sp = state.cpu.sp.wrapping_sub(1); // decrement stack pointer after pushing
-}
-/// Pop from stack to register
-fn pop_stack<I: Register>(state: &mut State) {
-    state.cpu.sp = state.cpu.sp.wrapping_add(1); // increment stack pointer after popping
-    state.cpu.io.high = 0x10;
-    state.cpu.io.low = state.cpu.sp;
-    state.read();
-    I::set(state, state.cpu.io.wire);
+    A::exec(state);
 }
 
-/// Reads current byte to register and increments address
-fn read_to_reg<R: ReadType, I: Register>(state: &mut State) {
-    R::pre(state);
-    state.read();
-    R::post(state);
-    I::set(state, state.cpu.io.wire);
+type InstrPipeline<const S: usize> = [fn(&mut State); S];
+const fn implied<M: MathOp>() -> InstrPipeline<1> {
+    [read::<SetAddrPC, M>] // read next instruction byte (and throw it away)
+}
+/// immediate addressing
+const fn immediate<M: MathOp>() -> InstrPipeline<1> {
+    [read::<SetAddrPC, Seq<ReadFirst, M>>]
 }
 
-/// sets higher byte from next memory location and sets lower byte from register. Runs MathOp
-fn read_high_reg_low<R: ReadType, I: Register, M: MathOp>(state: &mut State) {
-    // Read high from mem
-    R::pre(state);
-    state.read();
-    R::post(state);
-    state.cpu.io.high = state.cpu.io.wire;
-
-    // Read low from reg
-    state.cpu.io.low = I::get(state);
-    
-    // Run OP
-    M::exec(state)
+// BRK instruction
+const BRK: InstrPipeline<6> = [
+    read::<NOP, IncPC>,             // read next instruction byte (and throw it away), increment PC
+    write::<SetAddrStack, PUSH_STACK<PCH>>,             // push PCH onto stack, decrement SP
+    write::<SetAddrStack, PUSH_STACK<PCL>>,             // push PCL onto stack, decrement SP
+    write::<SetAddrStack, PUSH_STACK<FLAGS_WITH_BRK>>,  // push FLAGS on stack (with B flag set), decrement S
+    read::<SetAddrConst<0xFE, 0xFF>, LD<PCL>>,          // fetch PCL from 0xFFFE
+    read::<SetAddrConst<0xFF, 0xFF>, LD<PCH>>           // fetch PCH from 0xFFFF
+];
+/// Return from Interrupt
+const RTI: InstrPipeline<5> = [
+    read::<SetAddrPC, NOP>, // read next instruction byte (and throw it away)
+    read::<SetAddrStack, INC<SP>>, // increment SP
+    read::<SetAddrStack, Seq<ReadBUS<FLAGS_REMOVE_BREAK>, INC<SP>>>, // pull P from stack, increment SP
+    read::<SetAddrStack, Seq<ReadBUS<PCL>, INC<SP>>>, // pull PCL from stack, increment SP
+    read::<SetAddrStack, ReadBUS<PCH>>, // pull PCH from stack
+];
+/// Push register to stack (PHA, PHP)
+const fn push_stack<R: Register>() -> InstrPipeline<2> {
+    [
+        read::<SetAddrPC, NOP>, // read next instruction byte (and throw it away)
+        write::<PUSH_STACK<R>, NOP>,
+    ]
+}
+/// Pull register from stack (PLA, PLP)
+const fn pull_stack<R: Register>() -> InstrPipeline<3> {
+    [
+        read::<SetAddrPC, NOP>, // read next instruction byte (and throw it away)
+        read::<NOP, INC<SP>>,
+        read::<SetAddrStack, ReadBUS<R>>,
+    ]
 }
 
-/// Reads a byte from address at program counter. Depending on R, can read from current location, program counter, or zeropage.
-fn read_byte<R: ReadType>(state: &mut State) {
-    R::pre(state);
-    state.read();
-    R::post(state)
+/// Jump Subroutine
+const JSR: InstrPipeline<5> = [
+    read::<SetAddrPC, ReadFirst>, // fetch low address byte, increment PC
+    read::<SetAddrStack, NOP>, // internal operation (predecrement S?)
+    write::<PUSH_STACK<PCH>, NOP>, // push PCH on stack, decrement S
+    write::<PUSH_STACK<PCL>, NOP>, // push PCL on stack, decrement S
+    read::<SetAddrPC, Seq<ReadSecond, SET_PC<FIRST, SECOND>>>, // copy low address byte to PCL, fetch high address byte to PCH
+];
+/// Return Subroutine
+const RTS: InstrPipeline<5> = [
+    read::<SetAddrPC, NOP>, // read next instruction byte (and throw it away)
+    read::<SetAddrStack, INC<SP>>, // increment S
+    read::<SetAddrStack, Seq<ReadBUS<PCL>, INC<SP>>>, // pull PCL from stack, increment SP
+    read::<SetAddrStack, ReadBUS<PCH>>, // pull PCH from stack
+    read::<NOP, IncPC>, // increment PC
+];
+
+/// absolute addressing
+const fn absolute<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{2 + A}> {
+    join([
+        read::<SetAddrPC, ReadFirst>, // fetch low address byte, increment PC
+        read::<SetAddrPC, Seq<ReadSecond, SetAddrOP>> // fetch high address byte, increment PC
+        ], op)
 }
-/* fn read_byte_pc<PCRead>(state: &mut State) { read_byte::<PCRead>(state); }
-fn read_byte_next(state: &mut State) { read_byte::<RegRead>(state); }
-fn read_byte_zero(state: &mut State) { read_byte::<ZeroRead>(state); } */
-
-/// Set bus address using previos read as low and next read as high.
-fn read_addr<R: ReadType>(state: &mut State) {
-    let low = state.cpu.io.wire;
-    
-    R::pre(state);
-    state.read();
-    R::post(state);
-
-    state.cpu.io.high = state.cpu.io.wire;
-    state.cpu.io.low = low;
+/// zero page addressing
+const fn zeropage<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{1 + A}> {
+    join([read::<SetAddrPC, Seq<ReadFirst, SetAddrZero<FIRST>>>], op)
+}
+/// zero page indexed addressing
+const fn zeropage_indexed<I: Register, const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{2 + A}> {
+    join([
+        read::<SetAddrPC, ReadFirst>, // fetch address, increment PC
+        read::<SetAddrZero<FIRST>, AddIndex<I, false>> // read from address, add index register
+        ], op)
+}
+/// absolute indexed addressing
+const fn absolute_indexed<I: Register, const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{3 + A}> {
+    join([
+        read::<SetAddrPC, ReadFirst>, // fetch low byte of address, increment PC
+        read::<SetAddrPC, Seq<ReadSecond, AddIndex<I, true>>>, // fetch high byte of address, add index register to low address byte, increment PC
+        read::<NOP, NOP> // read from effective address, fix the high byte of effective address (this is done during page fault)
+        ], op)
+}
+/// relative addressing
+const fn branch_if<const FLAG: CpuFlags, const STATE: bool>() -> InstrPipeline<1> {
+    [
+        read::<SetAddrPC, Branch<FLAG, STATE>>, // fetch opcode of next instruction, If branch is taken, add operand to PCL. Otherwise increment PC.
+    ]
+}
+/// indexed indirect addressing
+const fn indexed_indirect<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{4 + A}> {
+    join([
+        read::<SetAddrPC, ReadFirst>, // fetch pointer address, increment PC
+        read::<SetAddrZero<FIRST>, AddIndex<X, false>>, // read from address, add X to address.
+        read::<NOP, ReadBUS<LATCH>>, // fetch effective address low
+        read::<INC<MEM_LOW>, SetAddr<LATCH, BUS>>, // fetch effective address high
+        ], op)
+}
+/// indirect indexed addressing
+const fn indirect_indexed<const A: usize>(op: InstrPipeline<A>) -> InstrPipeline<{4 + A}> {
+    join([
+        read::<SetAddrPC, ReadFirst>, // fetch pointer address, increment PC
+        read::<SetAddrZero<FIRST>, ReadBUS<LATCH>>, // fetch effective address low
+        read::<INC<MEM_LOW>, Seq<SetAddr<LATCH, BUS>, AddIndex<Y, true>>>, // fetch effective address high, add Y to low byte of effective address
+        read::<NOP, NOP>, // read from effective address, fix high byte of effective address?
+        ],op)
+}
+// absolute indirect (JMP) instruction
+const fn absolute_indirect_jmp() -> InstrPipeline<4> {
+    [
+        read::<SetAddrPC, ReadFirst>,                           // fetch pointer low, increment PC
+        read::<SetAddrPC, ReadSecond>,                          // fetch pointer high, increment PC. 
+        read::<SetAddrOP, ReadBUS<LATCH>>,                      // fetch low address to latch
+        read::<INC<MEM_LOW>, Seq<ReadBUS<PCH>, MV<LATCH, PCL>>> // fetch PCH, copy latch to PCL.
+    ]
 }
 
-/// Increment previous read by index x or y, use as low byte. read new byte for high byte. Handle Page crossing
-fn add_index_low_read_high<R: ReadType, I: Register>(state: &mut State) {
-    /// Increment previous read by index.
-    let (low, carry) = state.cpu.io.wire.carrying_add(I::get(state), false);
-    /// Read Byte
-    R::pre(state);
-    state.read();
-    R::post(state);
 
-    state.cpu.io.low = low;
-    state.cpu.io.high = state.cpu.io.wire;
-
-    /// If high byte needs increment, set state PageCross
-    if R::PAGE_CROSS && carry {
-        state.op_state = OpState::PageCross;
-    }
+const fn read_op<M: MathOp>() -> InstrPipeline<1> {
+    [read::<NOP, M>]
 }
-
-// Read byte and add index x or y to it
-fn read_add_index<R: ReadType, I: Register>(state: &mut State) {
-    /// Read Byte
-    R::pre(state);
-    state.read();
-    R::post(state);
-
-    state.cpu.io.wire = state.cpu.io.wire.wrapping_add(I::get(state));
+const fn write_op<M: MathOp>() -> InstrPipeline<1> {
+    [write::<M, NOP>]
 }
-
-/// Increment wire by Y and store locally. do a read from somewhere, set new low to stored value and new high to read value. Optionally check for Page Crosses.
-fn read_add_y<R: ReadType>(state: &mut State) {
-    /// Increment previous read by Y.
-    let (low, carry) = state.cpu.io.wire.carrying_add(state.cpu.y, false);
-    /// Read Byte
-    R::pre(state);
-    state.read();
-    R::post(state);
-
-    state.cpu.io.low = low;
-    state.cpu.io.high = state.cpu.io.wire;
-
-    /// If high byte needs increment, set state PageCross
-    if carry {
-        state.op_state = OpState::PageCross;
-    }
-}
-
-/// Do branch to relative address if M sets OpState::Branching.
-fn branch<M: MathOp>(state: &mut State) {
-    M::exec(state); // Branch MathOp should store operand in cpu.latch and set OpState::Branching in op_state
-    state.cpu.io.set(state.cpu.pc); // Useless read because the spec says so
-    state.read();
-    state.log.operand = Some(state.cpu.latch);
-
-    if state.op_state.contains(OpState::Branching) {
-        let (new_addr, overflow) = state.cpu.io.low.overflowing_add(state.cpu.latch);
-        // Set Page cross if overflow
-        state.op_state.set(OpState::PageCross, overflow);
-        // Update program counter
-        state.cpu.pc = u16::from_le_bytes([new_addr, state.cpu.io.high]);
-    }
-}
-/// Running read-only instructions
-fn read_run<R: ReadType, M: MathOp>(state: &mut State) {
-    R::pre(state);
-    state.read();
-    R::post(state);
-
-    state.log.operand = Some(state.cpu.io.wire);
-
-    M::exec(state)
-}
-/// Running write-only instructions
-fn write_run<M: MathOp>(state: &mut State) {
-    M::exec(state);
-    state.write()
-}
-/// Read for RW op
-fn read_eff(state: &mut State) {
-    state.read();
-    state.log.operand = Some(state.cpu.io.wire);
-}
-/// Run RW op
-fn rw_run<M: MathOp>(state: &mut State) {
-    state.write();
-    M::exec(state)
-}
-/// Write result of RW op
-fn write_eff(state: &mut State) {
-    state.write()
-}
-/// Run Math Op directly
-fn run<M: MathOp>(state: &mut State) {
-    M::exec(state)
+const fn rw_op<M: MathOp>() -> InstrPipeline<3> {
+    [State::read, write::<NOP, M>, State::write]
 }

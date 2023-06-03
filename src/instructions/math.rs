@@ -3,7 +3,106 @@ pub trait MathOp {
     fn exec(state: &mut State);
 }
 
-/// Performs ADD with Carry between A and Memory Bus.
+/// Uses bus wire as low byte, and reads next byte in mem as high. sets PC counter accordingly.
+/// Can be used for both absolute and indirect jumps
+pub type JMP = SET_PC<MEM_LOW, MEM_HIGH>;
+
+/// Do Nothing
+pub struct NOP;
+impl MathOp for NOP {
+    fn exec(state: &mut State) {}
+}
+
+/// Transfer byte from one register to another
+pub struct MV<R1: Register, R2: Register>(PhantomData<R1>, PhantomData<R2>);
+impl<R1: Register, R2: Register> MathOp for MV<R1, R2> {
+    fn exec(state: &mut State) {
+        R2::set(state, R1::get(state));
+    }
+}
+
+// Set Zero and Negative flags based on a given register
+pub struct SetDefaultFlags<I: Register>(PhantomData<I>);
+impl<I: Register> MathOp for SetDefaultFlags<I> {
+    fn exec(state: &mut State) {
+        let reg = I::get(state);
+        state.cpu.flags.set(CpuFlags::Zero, reg == 0);
+        state.cpu.flags.set(CpuFlags::Negative, reg & 0b1000_0000 != 0);
+    }
+}
+
+/// Join two MathOps together in a sequence
+pub struct Seq<M1: MathOp, M2: MathOp>(PhantomData<M1>, PhantomData<M2>);
+impl<M1: MathOp, M2: MathOp> MathOp for Seq<M1, M2> {
+    fn exec(state: &mut State) {
+        M1::exec(state);
+        M2::exec(state);
+    }
+}
+
+/// Store register to Memory
+pub type ST<I> = MV<I, BUS>;
+/// Load register from Memory
+pub type LD<I> = MV<BUS, I>;
+/// Load register from Memory, setting flags accordingly
+pub type LDF<I> = Seq<MV<BUS, I>, SetDefaultFlags<I>>;
+
+
+
+/// Read first Operand, increment program counter
+pub type ReadFirst = Seq<MV<BUS, FIRST>, IncPC>;
+/// Read second Operand, increment program counter
+pub type ReadSecond = Seq<MV<BUS, SECOND>, IncPC>;
+
+/// Sets address using two registers.
+pub type SetAddr<L, H> = Seq<MV<L, MEM_LOW>, MV<H, MEM_HIGH>>;
+/// Sets address to Program Counter
+pub struct SetAddrPC;
+impl MathOp for SetAddrPC {
+    fn exec(state: &mut State) { state.cpu.io.set(state.cpu.pc) }
+}
+/// Sets address to Stack Pointer
+pub type SetAddrStack = SetAddr<SP, ConstReg<01>>;
+/// Sets address to first two operands
+pub type SetAddrOP = SetAddr<FIRST, SECOND>;
+/// Sets address to constant
+pub type SetAddrConst<const L: u8, const H: u8> = SetAddr<ConstReg<L>, ConstReg<H>>;
+/// Sets address to address in zeropage
+pub type SetAddrZero<R> = SetAddr<R, ConstReg<0x00>>;
+
+/// Increment Program Counter
+pub struct IncPC;
+impl MathOp for IncPC {
+    fn exec(state: &mut State) {
+        state.cpu.pc = state.cpu.pc.wrapping_add(1);
+    }
+}
+/// Write Register to BUS
+pub type WriteBUS<R> = MV<R, BUS>;
+/// Reads to Register from BUS
+pub type ReadBUS<R> = MV<BUS, R>;
+// Sets Addr to Stack Pointer, Writes R to BUS, decrements Stack Pointer 
+pub type PUSH_STACK<R> = Seq<SetAddrStack, Seq<WriteBUS<R>, DEC<SP>>>;
+
+
+/// Add index register R to low address byte, optionally check for page crossing
+pub struct AddIndex<R: Register, const CHECK_PAGE: bool>(PhantomData<R>);
+impl<R: Register, const CHECK_PAGE: bool> MathOp for AddIndex<R, CHECK_PAGE> {
+    fn exec(state: &mut State) {
+        let (new_low, overflow) = state.cpu.io.low.overflowing_add(R::get(state));
+        state.cpu.io.low = new_low;
+        if CHECK_PAGE && overflow {
+            state.op_state.set(OpState::PageCross, true);
+        }
+    }
+}
+
+
+/// A = A + Memory + Carry
+/// Carry set of there is a carry
+/// Negative set if sign bit set
+/// Zero set if output is 0
+/// Overflow set if sign bit changed
 pub struct ADC;
 impl MathOp for ADC {
     fn exec(state: &mut State) {
@@ -18,7 +117,10 @@ impl MathOp for ADC {
     }
 }
 
-/// Compare A with contents of memory. Carry is set if memory <= A. Z is set if they are equal. Negative is set if A < memory.
+/// Compare Register with Memory.
+/// Carry set if  Memory <= A.
+/// Negative set if A < Memory.
+/// Zero set if A == Memory
 pub struct CMP<I: Register>(PhantomData<I>);
 impl<I: Register> MathOp for CMP<I> {
     fn exec(state: &mut State) {
@@ -30,7 +132,8 @@ impl<I: Register> MathOp for CMP<I> {
     }
 }
 
-/// Subtract Memory from Accumulator with Borrow.
+/// A = A - Memory - Borrow (Borrow = !Carry)
+/// Carry is set if resulting borrow is unset
 pub struct SBC;
 impl MathOp for SBC {
     fn exec(state: &mut State) {
@@ -53,7 +156,7 @@ impl MathOp for SBC {
     }
 }
 
-/// Performs AND with A and Memory Bus and stores result in A.
+/// A = A & Memory
 pub struct AND;
 impl MathOp for AND {
     fn exec(state: &mut State) {
@@ -64,11 +167,11 @@ impl MathOp for AND {
     }
 }
 
-/// Performs OR with accumulator
+/// A = A | Memory
 pub struct ORA;
 impl MathOp for ORA {
     fn exec(state: &mut State) {
-        // Perform assign AND
+        // Perform assign OR
         state.cpu.a |= state.cpu.io.wire;
         state.cpu.flags.set(CpuFlags::Negative, (state.cpu.a & 0b1000_0000) != 0);
         state.cpu.flags.set(CpuFlags::Zero, state.cpu.a == 0);
@@ -85,6 +188,7 @@ impl MathOp for EOR {
         state.cpu.flags.set(CpuFlags::Zero, state.cpu.a == 0);
     }
 }
+
 /// Performs AND with A and Memory Bus and sets flags.
 pub struct BIT;
 impl MathOp for BIT {
@@ -96,6 +200,7 @@ impl MathOp for BIT {
         state.cpu.flags.set(CpuFlags::Zero, res == 0);
     }
 }
+
 /// Shift Left a Register
 pub struct ASL<I: Register>(PhantomData<I>);
 impl<I: Register> MathOp for ASL<I> {
@@ -147,6 +252,7 @@ impl<I: Register> MathOp for LSR<I> {
         state.cpu.flags.set(CpuFlags::Zero, reg == 0);
     }
 }
+
 /// Rotate Right a Register (Shift right but with input carry)
 pub struct ROR<I: Register>(PhantomData<I>);
 impl<I: Register> MathOp for ROR<I> {
@@ -165,23 +271,14 @@ impl<I: Register> MathOp for ROR<I> {
         state.cpu.flags.set(CpuFlags::Zero, reg == 0);
     }
 }
-
-pub struct Branch<const FLAG: CpuFlags, const STATE: bool>;
-impl<const FLAG: CpuFlags, const STATE: bool> MathOp for Branch<FLAG, STATE> {
-    fn exec(state: &mut State) {
-        /// Check if specific cpu FLAG equals required STATE
-        if state.cpu.flags.contains(FLAG) == STATE {
-            state.op_state.set(OpState::Branching, true);
-            state.cpu.latch = state.cpu.io.wire;
-        }
-    }
-}
-pub struct CL<const FLAG: CpuFlags>;
-impl<const FLAG: CpuFlags> MathOp for CL<FLAG> {
+/// Clear Flag
+pub struct CLR<const FLAG: CpuFlags>;
+impl<const FLAG: CpuFlags> MathOp for CLR<FLAG> {
     fn exec(state: &mut State) {
         state.cpu.flags.remove(FLAG);
     }
 }
+/// Set Flag
 pub struct SET<const FLAG: CpuFlags>;
 impl<const FLAG: CpuFlags> MathOp for SET<FLAG> {
     fn exec(state: &mut State) {
@@ -189,62 +286,50 @@ impl<const FLAG: CpuFlags> MathOp for SET<FLAG> {
     }
 }
 
-
-/// Uses bus wire as low byte, and reads next byte in mem as high. sets PC counter accordingly.
-/// Can be used for both absolute and indirect jumps
-pub struct JMP;
-impl MathOp for JMP {
+/// Trigger Branch if FLAG matches STATE
+pub struct Branch<const FLAG: CpuFlags, const STATE: bool>;
+impl<const FLAG: CpuFlags, const STATE: bool> MathOp for Branch<FLAG, STATE> {
     fn exec(state: &mut State) {
-        state.cpu.pc_set([state.cpu.io.low, state.cpu.io.high]);
+        /// Check if specific cpu FLAG equals required STATE
+        if state.cpu.flags.contains(FLAG) == STATE {
+            state.op_state.set(OpState::Branching, true);
+            /// If branching, add operand to MEM_LOW, checking for page cross
+            IncPC::exec(state);
+            SetAddrPC::exec(state);
+            AddIndex::<BUS, true>::exec(state);
+            MV::<MEM_LOW, PCL>::exec(state);
+            // println!("{:?}", state);
+        } else {
+            IncPC::exec(state);
+        }
     }
 }
 
-pub struct NOP;
-impl MathOp for NOP {
-    fn exec(state: &mut State) {}
-}
-
-pub type ST<I> = TR<I, BUS>;
-pub type LD<I> = Seq<TR<BUS, I>, LDFLAGS<I>>;
-/// Transfer byte from one register to another
-pub struct TR<I1: Register, I2: Register>(PhantomData<I1>, PhantomData<I2>);
-impl<I1: Register, I2: Register> MathOp for TR<I1, I2> {
+/// Set Program Counter from two registers
+pub struct SET_PC<L: Register, H: Register>(PhantomData<L>, PhantomData<H>);
+impl<L: Register, H: Register> MathOp for SET_PC<L, H> {
     fn exec(state: &mut State) {
-        I2::set(state, I1::get(state));
+        state.cpu.pc_set([L::get(state), H::get(state)]);
     }
 }
 
-// Set zero and negative flags based on a given register
-pub struct LDFLAGS<I: Register>(PhantomData<I>);
-impl<I: Register> MathOp for LDFLAGS<I> {
+/// Increase register by one, wrapping. Optionally set CPU flags
+pub struct INC<I: Register, const SET_FLAGS: bool = false>(PhantomData<I>);
+impl<I: Register, const SET_FLAGS: bool> MathOp for INC<I, SET_FLAGS> {
     fn exec(state: &mut State) {
-        let reg = I::get(state);
-        state.cpu.flags.set(CpuFlags::Zero, reg == 0);
-        state.cpu.flags.set(CpuFlags::Negative, reg & 0b1000_0000 != 0);
+        let reg = I::get(state).wrapping_add(1);
+        I::set(state, reg);
+        if SET_FLAGS { SetDefaultFlags::<I>::exec(state); }
     }
 }
 
-pub struct Seq<M1: MathOp, M2: MathOp>(PhantomData<M1>, PhantomData<M2>);
-impl<M1: MathOp, M2: MathOp> MathOp for Seq<M1, M2> {
+/// Decrease register by one, wrapping. Optionally set CPU Flags
+pub struct DEC<I: Register, const SET_FLAGS: bool = false>(PhantomData<I>);
+impl<I: Register, const SET_FLAGS: bool> MathOp for DEC<I, SET_FLAGS> {
     fn exec(state: &mut State) {
-        M1::exec(state);
-        M2::exec(state);
-    }
-}
-
-/// Increase register by one
-pub struct INC<I: Register>(PhantomData<I>);
-impl<I: Register> MathOp for INC<I> {
-    fn exec(state: &mut State) {
-        I::set(state, state.cpu.io.wire.wrapping_add(1));
-    }
-}
-
-/// Decrease register by one
-pub struct DEC<I: Register>(PhantomData<I>);
-impl<I: Register> MathOp for DEC<I> {
-    fn exec(state: &mut State) {
-        I::set(state, I::get(state).wrapping_sub(1));
+        let reg = I::get(state).wrapping_sub(1);
+        I::set(state, reg);
+        if SET_FLAGS { SetDefaultFlags::<I>::exec(state); }
     }
 }
 

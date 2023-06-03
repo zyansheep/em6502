@@ -36,8 +36,14 @@ pub struct CPU {
     pub pc: u16,
     /// Stack Pointer
     pub sp: u8,
-    /// Latch register for temporary holding
+    /// Latch, Temporary storage between cycles of instructions
     pub latch: u8,
+    /// First Operand for current instruction
+    pub first: Option<u8>,
+    /// Second Operand for current instruction
+    pub second: Option<u8>,
+    /// Effective address that was used for the instruction
+    pub eff_addr: Option<u16>,
     pub io: CPUIO,
 }
 impl std::fmt::Debug for CPU {
@@ -50,6 +56,8 @@ impl std::fmt::Debug for CPU {
         .field("pc", &format_args!("0x{:X?}", &self.pc))
         .field("sp", &format_args!("0x{:X?}", &self.sp))
         .field("latch", &format_args!("0x{:X?}", &self.latch))
+        .field("first", &format_args!("0x{:X?}", &self.first))
+        .field("second", &format_args!("0x{:X?}", &self.second))
         .finish()
     }
 }
