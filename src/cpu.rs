@@ -44,6 +44,8 @@ pub struct CPU {
     pub second: Option<u8>,
     /// Effective address that was used for the instruction
     pub eff_addr: Option<u16>,
+    /// Value read/written from/to effective address
+    pub eff_val: Option<u8>,
     pub io: CPUIO,
 }
 impl std::fmt::Debug for CPU {
@@ -91,6 +93,9 @@ impl CPUIO {
         let bytes = addr.to_le_bytes();
         self.low = bytes[0];
         self.high = bytes[1];
+    }
+    pub fn get(&self) -> u16 {
+        u16::from_le_bytes([self.low, self.high])
     }
 }
 impl std::fmt::Debug for CPUIO {

@@ -9,7 +9,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("ORA $nn",		&zeropage(read_op::<ORA>())), // 05
 	("ASL $nn",		&zeropage(rw_op::<ASL<BUS>>())), // 06
 	("*SLO",		&[]), // 07
-	("PHP",			&push_stack::<FLAGS_REMOVE_BREAK>()), // 08
+	("PHP",			&push_stack::<FLAGS_WITH_BRK>()), // 08
 	("ORA #$nn",	&immediate::<ORA>()), // 09
 	("ASL A",		&implied::<ASL<ACC>>()), // 0A
 	("ANC",			&[]), // 0B
@@ -23,7 +23,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*SLO",		&[]), // 13
 	("*NOP",		&[]), // 14
 	("ORA $nn,X",	&zeropage_indexed::<X, _>(read_op::<ORA>())), // 15
-	("ASL $nn,X",	&indexed_indirect(rw_op::<ASL<BUS>>())), // 16
+	("ASL $nn,X",	&zeropage_indexed::<X, _>(rw_op::<ASL<BUS>>())), // 16
 	("*SLO",		&[]), // 17
 	("CLC",			&implied::<CLR<{CpuFlags::Carry}>>()), // 18
 	("ORA $nnnn,Y",	&absolute_indexed::<Y, _>(read_op::<ORA>())), // 19
@@ -31,7 +31,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*SLO",		&[]), // 1B
 	("*NOP",		&[]), // 1C
 	("ORA $nnnn,X",	&absolute_indexed::<X, _>(read_op::<ORA>())), // 1D
-	("ASL $nnnn,X",	&absolute_indexed::<X, _>(rw_op::<ASL<BUS>>())), // 1E
+	("ASL $nnnn,X",	&absolute_indexed::<X, _>(rw_op_pc::<ASL<BUS>>())), // 1E
 	("*SLO",		&[]), // 1F
 	("JSR",			&JSR), // 20
 	("AND ($nn,X)",	&indexed_indirect(read_op::<AND>())), // 21
@@ -39,7 +39,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*RLA",		&[]), // 23
 	("BIT $nn",		&zeropage(read_op::<BIT>())), // 24
 	("AND $nn",		&zeropage(read_op::<AND>())), // 25
-	("ROL $nn",		&zeropage(read_op::<ROL<BUS>>())), // 26
+	("ROL $nn",		&zeropage(rw_op::<ROL<BUS>>())), // 26
 	("*RLA $nn",	&[]), // 27
 	("PLP",			&pull_stack::<FLAGS_REMOVE_BREAK, NOP>()), // 28
 	("AND #$nn",	&immediate::<AND>()), // 29
@@ -55,7 +55,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*RLA",		&[]), // 33
 	("*NOP $nn,X",	&zeropage_indexed::<X, _>(read_op::<NOP>())), // 34
 	("AND $nn,X",	&zeropage_indexed::<X, _>(read_op::<AND>())), // 35
-	("ROL $nn,X",	&indexed_indirect(rw_op::<ROL<BUS>>())), // 36
+	("ROL $nn,X",	&zeropage_indexed::<X, _>(rw_op::<ROL<BUS>>())), // 36
 	("*RLA",		&[]), // 37
 	("SEC",			&implied::<SET<{CpuFlags::Carry}>>()), // 38
 	("AND $nnnn,Y",	&absolute_indexed::<Y, _>(read_op::<AND>())), // 39
@@ -63,7 +63,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*RLA",		&[]), // 3B
 	("*NOP $nnnn,X",&absolute_indexed::<X, _>(read_op::<NOP>())), // 3C
 	("AND $nnnn,X",	&absolute_indexed::<X, _>(read_op::<AND>())), // 3D
-	("ROL $nnnn,X",	&absolute_indexed::<X, _>(rw_op::<ROL<BUS>>())), // 3E
+	("ROL $nnnn,X",	&absolute_indexed::<X, _>(rw_op_pc::<ROL<BUS>>())), // 3E
 	("*RLA",		&[]), // 3F
 	("RTI",			&RTI), // 40
 	("EOR ($nn,X)",	&indexed_indirect(read_op::<EOR>())), // 41
@@ -87,7 +87,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("SRE",			&[]), // 53
 	("*NOP $nn,X",	&zeropage_indexed::<X, _>(read_op::<NOP>())), // 54
 	("EOR $nn,X",	&zeropage_indexed::<X, _>(read_op::<EOR>())), // 55
-	("LSR $nn,X",	&indexed_indirect(rw_op::<LSR<BUS>>())), // 56
+	("LSR $nn,X",	&zeropage_indexed::<X, _>(rw_op::<LSR<BUS>>())), // 56
 	("SRE",			&[]), // 57
 	("CLI",			&implied::<CLR<{CpuFlags::InterruptDisable}>>()), // 58
 	("EOR $nnnn,Y",	&absolute_indexed::<Y, _>(read_op::<EOR>())), // 59
@@ -95,7 +95,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("SRE",			&[]), // 5B
 	("*NOP $nnnn,X",&absolute_indexed::<X, _>(read_op::<NOP>())), // 5C
 	("EOR $nnnn,X",	&absolute_indexed::<X, _>(read_op::<EOR>())), // 5D
-	("LSR $nnnn,X",	&absolute_indexed::<X, _>(rw_op::<LSR<BUS>>())), // 5E
+	("LSR $nnnn,X",	&absolute_indexed::<X, _>(rw_op_pc::<LSR<BUS>>())), // 5E
 	("SRE",			&[]), // 5F
 	("RTS",			&RTS), // 60
 	("ADC ($nn,X)",	&indexed_indirect(read_op::<ADC>())), // 61
@@ -119,7 +119,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("RRA",			&[]), // 73
 	("*NOP $nn,X",	&zeropage_indexed::<X, _>(read_op::<NOP>())), // 74
 	("ADC $nn,X",	&zeropage_indexed::<X, _>(read_op::<ADC>())), // 75
-	("ROR $nn,X",	&indexed_indirect(rw_op::<ROR<BUS>>())), // 76
+	("ROR $nn,X",	&zeropage_indexed::<X, _>(rw_op::<ROR<BUS>>())), // 76
 	("*RRA",		&[]), // 77
 	("SEI",			&implied::<SET<{CpuFlags::InterruptDisable}>>()), // 78
 	("ADC $nnnn,Y",	&absolute_indexed::<Y, _>(read_op::<ADC>())), // 79
@@ -127,38 +127,38 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("RRA $nnnn,Y",	&[]), // 7B
 	("*NOP $nnnn,X",&absolute_indexed::<X, _>(read_op::<NOP>())), // 7C
 	("ADC $nnnn,X",	&absolute_indexed::<X, _>(read_op::<ADC>())), // 7D
-	("ROR $nnnn,X",	&absolute_indexed::<X, _>(rw_op::<ROR<BUS>>())), // 7E
+	("ROR $nnnn,X",	&absolute_indexed::<X, _>(rw_op_pc::<ROR<BUS>>())), // 7E
 	("*RRA $nnnn,Y",&[]), // 7F
 	("*NOP",		&immediate::<NOP>()), // 80
-	("STA ($nn,X)",	&indexed_indirect(write_op::<ST<ACC>>())), // 81
+	("STA ($nn,X)",	&indexed_indirect(write_op::<Store<ACC>>())), // 81
 	("*KIL",		&[]), // 82
 	("SAX",			&[]), // 83
-	("STY $nn",		&zeropage(write_op::<ST<Y>>())), // 84
-	("STA $nn",		&zeropage(write_op::<ST<ACC>>())), // 85
-	("STX $nn",		&zeropage(write_op::<ST<X>>())), // 86
+	("STY $nn",		&zeropage(write_op::<Store<Y>>())), // 84
+	("STA $nn",		&zeropage(write_op::<Store<ACC>>())), // 85
+	("STX $nn",		&zeropage(write_op::<Store<X>>())), // 86
 	("SAX",			&[]), // 87
-	("DEY",			&implied::<DEC<Y>>()), // 88
+	("DEY",			&implied::<DEC<Y, true>>()), // 88
 	("*NOP",		&[]), // 89
-	("TXA",			&implied::<MV<X, ACC>>()), // 8A
+	("TXA",			&implied::<MVF<X, ACC>>()), // 8A
 	("XAA",			&[]), // 8B
-	("STY $nnnn",	&absolute(write_op::<ST<Y>>())), // 8C
-	("STA $nnnn",	&absolute(write_op::<ST<ACC>>())), // 8D
-	("STX $nnnn",	&absolute(write_op::<ST<X>>())), // 8E
+	("STY $nnnn",	&absolute(write_op::<Store<Y>>())), // 8C
+	("STA $nnnn",	&absolute(write_op::<Store<ACC>>())), // 8D
+	("STX $nnnn",	&absolute(write_op::<Store<X>>())), // 8E
 	("SAX",			&[]), // 8F
 	("BCC $nn",		&branch_if::<{CpuFlags::Carry}, false>()), // 90
-	("STA ($nn),Y",	&indirect_indexed(write_op::<ST<ACC>>())), // 91
+	("STA ($nn),Y",	&indirect_indexed(write_op_pc::<Store<ACC>>())), // 91
 	("*KIL",		&[]), // 92
 	("AHX",			&[]), // 93
-	("STY $nn,X",	&zeropage_indexed::<X, _>(write_op::<ST<Y>>())), // 94
-	("STA $nn,X",	&zeropage_indexed::<X, _>(write_op::<ST<ACC>>())), // 95
-	("STX $nn,Y",	&zeropage_indexed::<Y, _>(write_op::<ST<X>>())), // 96
+	("STY $nn,X",	&zeropage_indexed::<X, _>(write_op::<Store<Y>>())), // 94
+	("STA $nn,X",	&zeropage_indexed::<X, _>(write_op::<Store<ACC>>())), // 95
+	("STX $nn,Y",	&zeropage_indexed::<Y, _>(write_op::<Store<X>>())), // 96
 	("SAX",			&[]), // 97
-	("TYA",			&implied::<MV<Y, ACC>>()), // 98
-	("STA $nnnn,Y",	&absolute_indexed::<Y, _>(write_op::<ST<ACC>>())), // 99
+	("TYA",			&implied::<MVF<Y, ACC>>()), // 98
+	("STA $nnnn,Y",	&absolute_indexed::<Y, _>(write_op_pc::<Store<ACC>>())), // 99
 	("TXS",			&implied::<MV<X, SP>>()), // 9A
 	("TAS",			&[]), // 9B
 	("SHY",			&[]), // 9C
-	("STA $nnnn,X",	&absolute_indexed::<X, _>(write_op::<ST<ACC>>())), // 9D
+	("STA $nnnn,X",	&absolute_indexed::<X, _>(write_op_pc::<Store<ACC>>())), // 9D
 	("SHX",			&[]), // 9E
 	("AHX",			&[]), // 9F
 	("LDY #$nn",	&immediate::<LDF<Y>>()), // A0
@@ -169,9 +169,9 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("LDA $nn",		&zeropage(read_op::<LDF<ACC>>())), // A5
 	("LDX $nn",		&zeropage(read_op::<LDF<X>>())), // A6
 	("LAX",			&[]), // A7
-	("TAY",			&implied::<MV<ACC, Y>>()), // A8
+	("TAY",			&implied::<MVF<ACC, Y>>()), // A8
 	("LDA #$nn",	&immediate::<LDF<ACC>>()), // A9
-	("TAX",			&implied::<MV<ACC, X>>()), // AA
+	("TAX",			&implied::<MVF<ACC, X>>()), // AA
 	("LAX",			&[]), // AB
 	("LDY $nnnn",	&absolute(read_op::<LDF<Y>>())), // AC
 	("LDA $nnnn",	&absolute(read_op::<LDF<ACC>>())), // AD
@@ -187,7 +187,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("LAX",			&[]), // B7
 	("CLV",			&implied::<CLR<{CpuFlags::Overflow}>>()), // B8
 	("LDA $nnnn,Y",	&absolute_indexed::<Y, _>(read_op::<LDF<ACC>>())), // B9
-	("TSX",			&implied::<MV<SP, X>>()), // BA
+	("TSX",			&implied::<MVF<SP, X>>()), // BA
 	("LAS $nnnn,Y",	&[]), // BB
 	("LDY $nnnn,X",	&absolute_indexed::<X, _>(read_op::<LDF<Y>>())), // BC
 	("LDA $nnnn,X",	&absolute_indexed::<X, _>(read_op::<LDF<ACC>>())), // BD
@@ -199,15 +199,15 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*DCP",		&[]), // C3
 	("CPY $nn",		&zeropage(read_op::<CMP<Y>>())), // C4
 	("CMP $nn",		&zeropage(read_op::<CMP<ACC>>())), // C5
-	("DEC $nn",		&zeropage(rw_op::<DEC<BUS>>())), // C6
+	("DEC $nn",		&zeropage(rw_op::<DEC<BUS, true>>())), // C6
 	("*DCP",		&[]), // C7
 	("INY",			&implied::<INC<Y, true>>()), // C8
 	("CMP #$nn",	&immediate::<CMP<ACC>>()), // C9
-	("DEX",			&implied::<INC<X, true>>()), // CA
+	("DEX",			&implied::<DEC<X, true>>()), // CA
 	("AXS",			&[]), // CB
 	("CPY $nnnn",	&absolute(read_op::<CMP<Y>>())), // CC
 	("CMP $nnnn",	&absolute(read_op::<CMP<ACC>>())), // CD
-	("DEC $nnnn",	&absolute(rw_op::<DEC<BUS>>())), // CE
+	("DEC $nnnn",	&absolute(rw_op::<DEC<BUS, true>>())), // CE
 	("*DCP",		&[]), // CF
 	("BNE $nn",		&branch_if::<{CpuFlags::Zero}, false>()), // D0
 	("CMP ($nn),Y",	&indirect_indexed(read_op::<CMP<ACC>>())), // D1
@@ -215,7 +215,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*DCP ($nn),Y",&[]), // D3
 	("*NOP $nn,X",	&zeropage_indexed::<X, _>(read_op::<NOP>())), // D4
 	("CMP $nn,X",	&zeropage_indexed::<X, _>(read_op::<CMP<ACC>>())), // D5
-	("DEC $nn,X",	&zeropage_indexed::<X, _>(rw_op::<DEC<BUS>>())), // D6
+	("DEC $nn,X",	&zeropage_indexed::<X, _>(rw_op::<DEC<BUS, true>>())), // D6
 	("*DCP",		&[]), // D7
 	("CLD",			&implied::<CLR<{CpuFlags::Decimal}>>()), // D8
 	("CMP $nnnn,Y",	&absolute_indexed::<Y, _>(read_op::<CMP<ACC>>())), // D9
@@ -223,7 +223,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*DCP",		&[]), // DB
 	("*NOP $nnnn,X",&absolute_indexed::<X, _>(read_op::<NOP>())), // DC
 	("CMP $nnnn,X",	&absolute_indexed::<X, _>(read_op::<CMP<ACC>>())), // DD
-	("DEC $nnnn,X",	&absolute_indexed::<X, _>(rw_op::<DEC<BUS>>())), // DE
+	("DEC $nnnn,X",	&absolute_indexed::<X, _>(rw_op_pc::<DEC<BUS, true>>())), // DE
 	("*DCP",		&[]), // DF
 	("CPX #$nn",	&immediate::<CMP<X>>()), // E0
 	("SBC ($nn,X)",	&indexed_indirect(read_op::<SBC>())), // E1
@@ -233,7 +233,7 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("SBC $nn",		&zeropage(read_op::<SBC>())), // E5
 	("INC $nn",		&zeropage(rw_op::<INC<BUS, true>>())), // E6
 	("*ISC",		&[]), // E7
-	("INX",			&implied::<INC<ACC, true>>()), // E8
+	("INX",			&implied::<INC<X, true>>()), // E8
 	("SBC #$nn",	&immediate::<SBC>()), // E9
 	("NOP",			&implied::<NOP>()), // EA
 	("SBC",			&[]), // EB
@@ -255,6 +255,6 @@ pub const INSTR_SET: [(&'static str, &'static [fn(&mut State)]); 256] = [
 	("*ISC",		&[]), // FB
 	("*NOP $nnnn,X",&absolute_indexed::<X, _>(read_op::<NOP>())), // FC
 	("SBC $nnnn,X",	&absolute_indexed::<X, _>(read_op::<SBC>())), // FD
-	("INC $nnnn,X",	&absolute_indexed::<X, _>(rw_op::<INC<BUS, true>>())), // FE
+	("INC $nnnn,X",	&absolute_indexed::<X, _>(rw_op_pc::<INC<BUS, true>>())), // FE
 	("*ISC",		&[]), // FF
 ];

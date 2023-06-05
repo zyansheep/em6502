@@ -41,21 +41,32 @@ impl<M1: MathOp, M2: MathOp> MathOp for Seq<M1, M2> {
 }
 
 /// Store register to Memory
-pub type ST<I> = MV<I, BUS>;
-/// Load register from Memory
-pub type LD<I> = MV<BUS, I>;
+pub type Store<I> = MV<I, BUS>;
+/// Fetch from memory to register
+pub type Fetch<I> = MV<BUS, I>;
+/// Like MV, but sets flags based on the resulting operand.
+pub type MVF<R1, R2> = Seq<MV<R1, R2>, SetDefaultFlags<R2>>;
 /// Load register from Memory, setting flags accordingly
-pub type LDF<I> = Seq<MV<BUS, I>, SetDefaultFlags<I>>;
-
-
+pub type LDF<I> = MVF<BUS, I>;
 
 /// Read first Operand, increment program counter
 pub type ReadFirst = Seq<MV<BUS, FIRST>, IncPC>;
 /// Read second Operand, increment program counter
 pub type ReadSecond = Seq<MV<BUS, SECOND>, IncPC>;
+/// Read second operand as high value of address
+pub type ReadSecondAddr = Seq<ReadSecond, SetAddrOP>;
 
+/// Log current address as effective address
+pub struct LogEff;
+impl MathOp for LogEff {
+    fn exec(state: &mut State) {
+        let addr = u16::from_le_bytes([state.cpu.io.low, state.cpu.io.high]);
+        state.cpu.eff_addr = Some(addr);
+    }
+}
 /// Sets address using two registers.
 pub type SetAddr<L, H> = Seq<MV<L, MEM_LOW>, MV<H, MEM_HIGH>>;
+
 /// Sets address to Program Counter
 pub struct SetAddrPC;
 impl MathOp for SetAddrPC {
@@ -77,12 +88,8 @@ impl MathOp for IncPC {
         state.cpu.pc = state.cpu.pc.wrapping_add(1);
     }
 }
-/// Write Register to BUS
-pub type WriteBUS<R> = MV<R, BUS>;
-/// Reads to Register from BUS
-pub type ReadBUS<R> = MV<BUS, R>;
 // Sets Addr to Stack Pointer, Writes R to BUS, decrements Stack Pointer 
-pub type PUSH_STACK<R> = Seq<SetAddrStack, Seq<WriteBUS<R>, DEC<SP>>>;
+pub type PUSH_STACK<R> = Seq<SetAddrStack, Seq<Store<R>, DEC<SP>>>;
 
 
 /// Add index register R to low address byte, optionally check for page crossing
@@ -123,20 +130,31 @@ impl MathOp for ADC {
 }
 
 /// Compare Register with Memory.
-/// Carry set if  Memory <= A.
-/// Negative set if A < Memory.
+/// Carry set if  A >= Memory.
+/// Negative set if sign bit of A - Memory is set.
 /// Zero set if A == Memory
 pub struct CMP<I: Register>(PhantomData<I>);
 impl<I: Register> MathOp for CMP<I> {
     fn exec(state: &mut State) {
         // Unsigned addition overflow changes the carry flag
         let reg = I::get(state);
-        let (res, borrow) = reg.borrowing_sub(state.cpu.io.wire, false);
-        println!("{:02X?} - {:02X?} = {:02X?} + {borrow}", reg, state.cpu.io.wire, res);
-        state.cpu.flags.set(CpuFlags::Carry, !borrow);
+        let mem = state.cpu.io.wire;
+        let res = reg.wrapping_sub(mem);
+        // println!("{:02X?} - {:02X?} = {:02X?} + {borrow}", reg, mem, res);
         state.cpu.flags.set(CpuFlags::Negative, (res & 0b1000_0000) != 0);
-        state.cpu.flags.set(CpuFlags::Zero, res == 0);
+        state.cpu.flags.set(CpuFlags::Zero, reg == mem);
+        state.cpu.flags.set(CpuFlags::Carry, reg >= mem);
     }
+}
+#[test]
+fn test_cmp() {
+    let state = &mut State::new();
+    state.cpu.a = 10;
+    state.cpu.io.wire = 10;
+    CMP::<ACC>::exec(state);
+    assert!(state.cpu.flags.contains(CpuFlags::Zero));
+    assert!(state.cpu.flags.contains(CpuFlags::Carry));
+    assert!(!state.cpu.flags.contains(CpuFlags::Negative));
 }
 
 /// A = A - Memory - Borrow (Borrow = !Carry)
@@ -245,18 +263,18 @@ impl<I: Register> MathOp for ROL<I> {
     }
 }
 
-/// Shift Right a Register
+/// Shift Right a Register ("Logical Shift Right")
 pub struct LSR<I: Register>(PhantomData<I>);
 impl<I: Register> MathOp for LSR<I> {
     fn exec(state: &mut State) {
         let reg = I::get(state);
         // Carry bit is bit that is shift out
         let carry = (reg & 0b0000_0001) != 0;
-        let reg = reg >> 1;
-        I::set(state, reg);
-        state.cpu.flags.set(CpuFlags::Carry, carry);
+        let reg = reg >> 1; // do the shift
+        I::set(state, reg); // set the registers
+        state.cpu.flags.set(CpuFlags::Carry, carry); // set the carry
         state.cpu.flags.set(CpuFlags::Negative, false); // Negative bit is shifted in, so it is always false
-        state.cpu.flags.set(CpuFlags::Zero, reg == 0);
+        state.cpu.flags.set(CpuFlags::Zero, reg == 0); // set zero accordingly
     }
 }
 
@@ -304,7 +322,7 @@ impl<const FLAG: CpuFlags, const STATE: bool> MathOp for Branch<FLAG, STATE> {
             /// If branching, add operand to MEM_LOW, checking for page cross
             IncPC::exec(state);
             SetAddrPC::exec(state);
-            AddIndex::<BUS, true>::exec(state);
+            AddIndex::<BUS, true>::exec(state); // may cross page
             MV::<MEM_LOW, PCL>::exec(state);
             // println!("{:?}", state);
         } else {

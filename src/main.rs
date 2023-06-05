@@ -154,15 +154,15 @@ impl Logging {
     }
     fn log(state: &mut State, instr_str: &str) {
         let cpu = &state.log.start_cpu;
-        let cpu_str = format!("A:{:02X?}, X:{:02X?}, Y:{:02X?}, P:{:02X?}, SP:{:02X?}   CYC: {}", cpu.a, cpu.x, cpu.y, cpu.flags.bits(), cpu.sp, state.log.start_cycle);
-        let bytes_str = format!("{:04X?}{}: {:02X?}{}{}", 
+        let cpu_str = format!("A:{:02X?} X:{:02X?} Y:{:02X?} P:{:02X?} SP:{:02X?} CYC:{}", cpu.a, cpu.x, cpu.y, cpu.flags.bits(), cpu.sp, state.log.start_cycle);
+        let bytes_str = format!("{:04X?}  {:02X?}{}{}", 
             state.log.opcode_addr,
-            state.mem.mem_to_rom(state.log.opcode_addr).map_or(String::new(), |x|format!("({:#06X?})", x)),
+            //state.mem.mem_to_rom(state.log.opcode_addr).map_or(String::new(), |x|format!("({:#06X?})", x)),
             state.log.opcode,
             state.cpu.first.map_or("".to_owned(), |x|format!(" {:02X?}", x)),
             state.cpu.second.map_or("".to_owned(), |x|format!(" {:02X?}", x)),
         );
-        println!("{:<25} {:<14} {}", bytes_str, instr_str, cpu_str);
+        println!("{:<15} {:<12} {}", bytes_str, instr_str.split(" ").next().unwrap(), cpu_str);
     }
     /* fn log_mem_op(state: &mut State, operand: u8) {
         state.log.last_mem = u16::from_le_bytes([state.cpu.io.low, state.cpu.io.high]);
@@ -220,6 +220,7 @@ impl State {
         self.cpu.pc = self.cpu.pc.wrapping_add(1);
         self.cpu.first = None;
         self.cpu.second = None;
+        self.cpu.eff_addr = None;
         self.op_state.insert(OpState::Active);
     }
     /// Run a single CPU cycle
@@ -232,20 +233,16 @@ impl State {
         // Deal with branching and page crosses
         if self.op_state.contains(OpState::Branching) {
             self.op_state.remove(OpState::Branching);
-            self.op_state.remove(OpState::Active);
-        } else if self.op_state.contains(OpState::PageCross) { // Deal with page cross
-            self.cpu.io.high = self.cpu.io.high.wrapping_add(1);
-            self.cpu.pc = self.cpu.pc.wrapping_add(0x0100);
-            self.read();
-            self.op_state.remove(OpState::PageCross);
         } else if self.op_state.contains(OpState::Active) {
             let instr_set = INSTR_SET[self.instr_indx].1;
             if instr_set.len() == 0 { Logging::log(self, INSTR_SET[self.instr_indx].0); return false }
 
-            // Run op on state
-            instr_set[self.cycle_idx](self);
+            let curren_idx = self.cycle_idx;
+
             // If no more idx, reset OpState
-            self.cycle_idx += 1;
+            self.cycle_idx = self.cycle_idx.wrapping_add(1);
+            // Run op on state
+            instr_set[curren_idx](self);
             if instr_set.len() == self.cycle_idx {
                 self.op_state.remove(OpState::Active);
             }
